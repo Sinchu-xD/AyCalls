@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aytgcalls"
+version = "0.1.0"
+description = "Play audio into Telegram group voice chats with Kurigram + aiortc. No py-tgcalls."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "aytgcalls contributors" }]
+keywords = ["telegram", "voice-chat", "group-call", "webrtc", "kurigram", "opus", "aiortc"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Chat",
+    "Topic :: Multimedia :: Sound/Audio",
+]
+
+# NOTE: kurigram imports as `pyrogram`. It must NOT be installed alongside
+# `pyrogram` or `pyrofork`. See README -> Installation.
+dependencies = [
+    "kurigram>=2.2.9",
+    "aiortc>=1.9.0",
+    "av>=11.0.0",
+    "aiohttp>=3.9.0",
+]
+
+[project.optional-dependencies]
+fast = ["tgcrypto>=1.2.5"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[project.urls]
+Homepage = "https://github.com/aytgcalls/aytgcalls"
+Documentation = "https://github.com/aytgcalls/aytgcalls#readme"
+Issues = "https://github.com/aytgcalls/aytgcalls/issues"
+
+[tool.setuptools.packages.find]
+include = ["aytgcalls*"]
+
+[tool.setuptools.package-data]
+aytgcalls = ["py.typed"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["examples/tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_ignores = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
