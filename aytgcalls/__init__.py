@@ -13,7 +13,7 @@ decoding. No py-tgcalls, no tgcalls, no Telethon.
 
 from __future__ import annotations
 
-from .config import CallConfig, TelegramCredentials
+from .config import AyConfig, AyCreds, CallConfig, TelegramCredentials
 from .exceptions import (
     AlreadyJoined,
     AlreadyPlaying,
@@ -41,6 +41,14 @@ from .types import (
     SAMPLE_RATE,
     SAMPLES_PER_FRAME,
     AudioSource,
+    AyDisconnectReason,
+    AyEndReason,
+    AyKind,
+    AyLoop,
+    AySource,
+    AyState,
+    AyStats,
+    AyTrack,
     CallStats,
     DisconnectReason,
     LoopMode,
@@ -60,19 +68,19 @@ def __getattr__(name: str) -> object:
     ``import aytgcalls`` cheap and lets the SDP/media layers be used on a machine without
     an MTProto stack installed.
     """
-    if name == "GroupCall":
+    if name in ("AyCall", "GroupCall"):
         from .call.group_call import GroupCall  # noqa: PLC0415
 
         return GroupCall
-    if name == "GroupCallFactory":
+    if name in ("AyFac", "GroupCallFactory"):
         from .call.factory import GroupCallFactory  # noqa: PLC0415
 
         return GroupCallFactory
-    if name == "Player":
+    if name in ("AyPlayer", "Player"):
         from .player.player import Player  # noqa: PLC0415
 
         return Player
-    if name == "TrackQueue":
+    if name in ("AyQueue", "TrackQueue"):
         from .player.queue import TrackQueue  # noqa: PLC0415
 
         return TrackQueue
@@ -81,7 +89,22 @@ def __getattr__(name: str) -> object:
 
 __all__ = [
     "__version__",
-    # call
+    # --- the branded API: this is what you import ---
+    "AyCall",
+    "AyFac",
+    "AyPlayer",
+    "AyQueue",
+    "AyConfig",
+    "AyCreds",
+    "AyLoop",
+    "AyState",
+    "AySource",
+    "AyTrack",
+    "AyStats",
+    "AyKind",
+    "AyEndReason",
+    "AyDisconnectReason",
+    # --- descriptive aliases, all still valid ---
     "GroupCall",
     "GroupCallFactory",
     "Player",

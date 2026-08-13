@@ -41,6 +41,8 @@ class LoopMode(enum.Enum):
     OFF = "off"
     TRACK = "track"
     QUEUE = "queue"
+    #: Repeat the current track a fixed number of times, then carry on.
+    TIMES = "times"
 
     @classmethod
     def from_any(cls, value: Any) -> LoopMode:
@@ -49,6 +51,9 @@ class LoopMode(enum.Enum):
             return value
         if isinstance(value, bool):
             return cls.QUEUE if value else cls.OFF
+        if isinstance(value, int):
+            # loop(0) turns it off, loop(1) is a plain repeat, loop(n) repeats n times.
+            return cls.OFF if value <= 0 else cls.TIMES
         text = str(value).strip().lower()
         aliases = {
             "off": cls.OFF, "none": cls.OFF, "no": cls.OFF, "0": cls.OFF, "disable": cls.OFF,
@@ -56,10 +61,14 @@ class LoopMode(enum.Enum):
             "current": cls.TRACK, "1": cls.TRACK,
             "queue": cls.QUEUE, "all": cls.QUEUE, "playlist": cls.QUEUE, "yes": cls.QUEUE,
             "on": cls.QUEUE,
+            "times": cls.TIMES, "repeat": cls.TIMES,
         }
+        if text.isdigit():
+            return cls.OFF if int(text) <= 0 else cls.TIMES
         if text not in aliases:
             raise ValueError(
-                f"Unknown loop mode {value!r}. Use one of: off, track, queue."
+                f"Unknown loop mode {value!r}. Use a count (e.g. 3), or one of: "
+                "off, track, queue, shuffle."
             )
         return aliases[text]
 
@@ -94,6 +103,8 @@ class DisconnectReason(enum.Enum):
     """Why the call ended."""
 
     REQUESTED = "requested"
+    #: The queue ran out and auto-leave took us out of the call.
+    QUEUE_FINISHED = "queue_finished"
     CALL_ENDED = "call_ended"
     KICKED = "kicked"
     TRANSPORT_FAILED = "transport_failed"
@@ -222,3 +233,28 @@ class CallStats:
             "ice_state": self.ice_state,
             "dtls_state": self.dtls_state,
         }
+
+
+# --------------------------------------------------------------------------------------
+# Branded aliases. The public surface of the library is the ``Ay*`` names; the longer
+# descriptive names remain valid so existing code keeps working.
+# --------------------------------------------------------------------------------------
+AyLoop = LoopMode
+AyState = PlaybackState
+AySource = AudioSource
+AyTrack = TrackInfo
+AyStats = CallStats
+AyKind = SourceKind
+AyEndReason = StreamEndReason
+AyDisconnectReason = DisconnectReason
+
+__all__ += [
+    "AyLoop",
+    "AyState",
+    "AySource",
+    "AyTrack",
+    "AyStats",
+    "AyKind",
+    "AyEndReason",
+    "AyDisconnectReason",
+]

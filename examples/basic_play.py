@@ -1,4 +1,4 @@
-"""Play a local file into a group voice chat.
+"""The shortest possible player: no join, no leave, no bookkeeping.
 
     export API_ID=... API_HASH=... STRING_SESSION=...
     python examples/basic_play.py -1001234567890 song.mp3
@@ -9,37 +9,33 @@ from __future__ import annotations
 import asyncio
 import sys
 
-from aytgcalls import GroupCall, TelegramCredentials, enable_debug
+from aytgcalls import AyCall, AyCreds, enable_debug
 from aytgcalls.telegram import build_user_client
 
 
-async def main(chat_id: int, path: str) -> None:
+async def main(chat_id: int, source: str) -> None:
     enable_debug()  # remove for quieter logs
 
     # Credentials come from API_ID / API_HASH / STRING_SESSION — never hardcode them.
-    client = build_user_client(TelegramCredentials.from_env())
+    client = build_user_client(AyCreds.from_env())
     await client.start()
 
-    call = GroupCall(client)
+    call = AyCall(client, chat_id)
     finished = asyncio.Event()
 
-    @call.on_stream_end
-    async def _(_call: GroupCall, source, reason) -> None:  # noqa: ANN001
-        print(f"finished {source.display_name} ({reason.value})")
-        finished.set()
-
     @call.on_disconnect
-    async def _(_call: GroupCall, reason) -> None:  # noqa: ANN001
-        print(f"disconnected: {reason.value}")
+    async def _(_call: AyCall, reason) -> None:  # noqa: ANN001
+        print(f"call ended: {reason.value}")
         finished.set()
 
     try:
-        await call.join(chat_id)
-        await call.play(path)
-        print("playing… (Ctrl-C to stop)")
+        # play() joins the voice chat, starts the audio, and the call leaves by itself
+        # once the queue runs out. That is the whole program.
+        await call.play(source)
+        print("playing… (the call will leave automatically when the track ends)")
         await finished.wait()
     finally:
-        await call.leave()
+        await call.end()
         await client.stop()
 
 

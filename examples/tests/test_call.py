@@ -259,13 +259,17 @@ async def test_reconnect_is_cancellable() -> None:
 # --------------------------------------------------------------------------- GroupCall
 
 
-async def test_playback_before_join_is_rejected() -> None:
-    from aytgcalls import GroupCall
+async def test_controls_before_join_are_rejected() -> None:
+    """pause/resume/skip need a call; play() only needs to know *which* chat."""
+    from aytgcalls import AyCall
 
-    call = GroupCall(FakeClient())
-    for coro in (call.play("x.mp3"), call.pause(), call.resume(), call.skip()):
+    call = AyCall(FakeClient())
+    for coro in (call.pause(), call.resume(), call.skip()):
         with pytest.raises(NotJoined, match="Not joined"):
             await coro
+    # play() auto-joins, so the only thing it can be missing is the chat id.
+    with pytest.raises(NotJoined, match="No chat id known"):
+        await call.play("x.mp3")
     assert call.ssrc is None
     assert not call.is_connected
 

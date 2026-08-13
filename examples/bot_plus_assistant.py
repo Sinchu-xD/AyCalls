@@ -1,4 +1,4 @@
-"""A complete music-bot command surface in one file.
+"""A complete music bot. Every command is one line, because AyFac handles the rest.
 
 A bot **cannot** join a voice chat. The bot here only parses commands and dispatches to
 the assistant (user) client, which is the one actually in the call.
@@ -6,16 +6,16 @@ the assistant (user) client, which is the one actually in the call.
     export API_ID=... API_HASH=... STRING_SESSION=... BOT_TOKEN=...
     python examples/bot_plus_assistant.py
 
-Commands
-    /play <file|url>   play now (or queue if something is already playing)
-    /add <file|url>    always queue
-    /pause  /resume  /skip  /previous  /replay  /stop  /end
-    /seek <seconds>    jump to an absolute position
-    /forward [secs]    default 10          /rewind [secs]   default 10
-    /volume <0-200>    local gain          /mute  /unmute    server side
-    /loop <off|track|queue>
-    /queue             show what is lined up
-    /now               show what is playing, with a progress bar
+There is no /join and no /add: `/play` joins if needed and queues if busy, and the call
+leaves on its own when the queue runs out. Reply to a voice note or an audio file with
+`/play` and it is downloaded and played.
+
+    /play <file|url>   or reply to a voice/audio message
+    /pause  /resume  /skip  /previous  /replay  /stop
+    /seek <secs>  /forward [secs]  /rewind [secs]
+    /volume <0-200>  /mute  /unmute
+    /loop <n|track|queue|shuffle|off>
+    /now   /queue
 """
 
 from __future__ import annotations
@@ -25,11 +25,11 @@ import asyncio
 from pyrogram import Client, filters  # provided by kurigram
 from pyrogram.types import Message
 
-from aytgcalls import GroupCallFactory, TelegramCredentials
+from aytgcalls import AyCreds, AyFac
 from aytgcalls.exceptions import AytgcallsError
 from aytgcalls.telegram import build_user_client
 
-credentials = TelegramCredentials.from_env().require()
+credentials = AyCreds.from_env().require()
 if not credentials.bot_token:
     raise SystemExit("BOT_TOKEN is required for the command interface")
 
@@ -45,42 +45,38 @@ bot = Client(
     in_memory=True,
 )
 
-factory = GroupCallFactory(assistant)
+ay = AyFac(assistant)
 
 
 def argument(message: Message, default: str | None = None) -> str | None:
-    parts = message.text.split(maxsplit=1)
+    parts = (message.text or "").split(maxsplit=1)
     return parts[1].strip() if len(parts) > 1 else default
 
 
 def number(message: Message, default: float) -> float:
-    raw = argument(message)
     try:
-        return float(raw) if raw is not None else default
+        return float(argument(message) or default)
     except ValueError:
         return default
 
 
 @bot.on_message(filters.command(["play", "add"]) & filters.group)
 async def play(_: Client, message: Message) -> None:
-    source = argument(message)
+    # A replied-to voice note / audio file is a valid source all by itself.
+    source: object | None = argument(message)
+    if message.reply_to_message is not None and not source:
+        source = message.reply_to_message
     if not source:
-        await message.reply("Usage: `/play <file path or url>`")
+        await message.reply("Usage: `/play <file|url>` — or reply to a voice/audio message.")
         return
     try:
-        call = await factory.get_or_create(message.chat.id)
-        if message.command[0] == "add":
-            track = await call.queue.add(source)
-            await message.reply(f"➕ Queued **{track.display_name}** (#{len(call.queue)})")
-            return
-        # add() plays immediately when idle and queues when busy — the "auto" path.
-        track, started = await call.add(source)
+        track, started = await ay.play(message.chat.id, source)
     except AytgcallsError as exc:
         await message.reply(f"❌ {exc}")
         return
     await message.reply(
         f"▶️ Playing **{track.display_name}**" if started
-        else f"➕ Queued **{track.display_name}** (#{len(call.queue)})"
+        else f"➕ Queued **{track.display_name}** (#{len(ay[message.chat.id].queue)})"
     )
 
 
@@ -89,64 +85,49 @@ async def play(_: Client, message: Message) -> None:
     & filters.group
 )
 async def control(_: Client, message: Message) -> None:
-    call = factory.get(message.chat.id)
-    if call is None or not call.is_connected:
-        await message.reply("Not in a voice chat here.")
-        return
-    action = message.command[0]
+    chat, action = message.chat.id, message.command[0]
     try:
         if action == "pause":
-            await call.pause()
-            await message.reply(f"⏸ Paused at `{call.now_playing.format_time(call.position)}`")
+            await ay.pause(chat)
+            await message.reply("⏸ Paused")
         elif action == "resume":
-            await call.resume()
+            await ay.resume(chat)
             await message.reply("▶️ Resumed")
         elif action == "skip":
-            following = await call.skip()
+            following = await ay.skip(chat)
             await message.reply(
                 f"⏭ **{following.display_name}**" if following else "⏭ Queue finished"
             )
         elif action == "previous":
-            earlier = await call.previous()
+            earlier = await ay.previous(chat)
             await message.reply(f"⏮ **{earlier.display_name}**")
         elif action == "replay":
-            await call.replay()
-            await message.reply("🔁 Restarted from the beginning")
-        elif action == "stop":
-            await call.stop()
-            await message.reply("⏹ Stopped and cleared the queue")
-        else:  # end
-            await call.end()
-            await message.reply("👋 Left the voice chat")
+            await ay.replay(chat)
+            await message.reply("🔁 From the top")
+        else:  # stop / end
+            await ay.stop(chat)
+            await message.reply("⏹ Stopped and left the voice chat")
     except AytgcallsError as exc:
         await message.reply(f"❌ {exc}")
 
 
 @bot.on_message(filters.command(["seek", "forward", "rewind"]) & filters.group)
 async def seeking(_: Client, message: Message) -> None:
-    call = factory.get(message.chat.id)
-    if call is None or not call.is_connected:
-        await message.reply("Not in a voice chat here.")
-        return
-    action = message.command[0]
+    chat, action = message.chat.id, message.command[0]
     try:
         if action == "seek":
-            target = argument(message)
-            if target is None:
+            if argument(message) is None:
                 await message.reply("Usage: `/seek <seconds>`")
                 return
-            landed = await call.seek(float(target))
+            landed = await ay.seek(chat, number(message, 0))
         elif action == "forward":
-            landed = await call.forward(number(message, 10))
+            landed = await ay.forward(chat, number(message, 10))
         else:
-            landed = await call.rewind(number(message, 10))
-    except ValueError:
-        await message.reply("Give me a number of seconds.")
-        return
+            landed = await ay.rewind(chat, number(message, 10))
     except AytgcallsError as exc:
         await message.reply(f"❌ {exc}")
         return
-    info = call.now_playing
+    info = ay.now_playing(chat)
     await message.reply(
         f"⏩ `{info.format_time(landed)} / {info.format_time(info.duration)}`\n"
         f"{info.progress_bar()}"
@@ -155,57 +136,49 @@ async def seeking(_: Client, message: Message) -> None:
 
 @bot.on_message(filters.command(["volume", "mute", "unmute"]) & filters.group)
 async def loudness(_: Client, message: Message) -> None:
-    call = factory.get(message.chat.id)
-    if call is None or not call.is_connected:
-        await message.reply("Not in a voice chat here.")
-        return
+    chat, action = message.chat.id, message.command[0]
     try:
-        if message.command[0] == "mute":
-            await call.mute()
+        if action == "mute":
+            await ay.mute(chat)
             await message.reply("🔇 Muted")
-        elif message.command[0] == "unmute":
-            await call.unmute()
+        elif action == "unmute":
+            await ay.unmute(chat)
             await message.reply("🔊 Unmuted")
         else:
             percent = int(number(message, -1))
             if not 0 <= percent <= 200:
                 await message.reply("Usage: `/volume <0-200>`")
                 return
-            await call.set_volume(percent)
+            await ay.volume(chat, percent)
             await message.reply(f"🔊 Volume {percent}%")
-    except (AytgcallsError, ValueError) as exc:
+    except AytgcallsError as exc:
         await message.reply(f"❌ {exc}")
 
 
 @bot.on_message(filters.command("loop") & filters.group)
 async def loop(_: Client, message: Message) -> None:
-    call = factory.get(message.chat.id)
-    if call is None or not call.is_connected:
-        await message.reply("Not in a voice chat here.")
-        return
     try:
-        mode = call.set_loop(argument(message, "off"))
-    except ValueError as exc:
+        # A count, a name, or "shuffle" — loop() sorts it out.
+        mode = await ay.loop(message.chat.id, argument(message, "off"))
+    except (AytgcallsError, ValueError) as exc:
         await message.reply(f"❌ {exc}")
         return
-    await message.reply(f"🔁 Loop: **{mode.value}**")
+    times = ay[message.chat.id].queue.loop_times
+    await message.reply(f"🔁 Loop: **{mode.value}**" + (f" ×{times}" if times else ""))
 
 
 @bot.on_message(filters.command(["now", "np", "queue"]) & filters.group)
 async def status(_: Client, message: Message) -> None:
-    call = factory.get(message.chat.id)
-    if call is None or not call.is_connected:
-        await message.reply("Not in a voice chat here.")
+    info = ay.now_playing(message.chat.id)
+    if info is None or info.source is None:
+        await message.reply("Nothing is playing here.")
         return
-    info = call.now_playing
     if message.command[0] == "queue":
-        if not call.queue.items:
+        items = ay[message.chat.id].queue.items
+        if not items:
             await message.reply(f"Now: **{info.title}**\nQueue is empty.")
             return
-        lines = "\n".join(
-            f"{index + 1}. {track.display_name}"
-            for index, track in enumerate(call.queue.items[:15])
-        )
+        lines = "\n".join(f"{i + 1}. {t.display_name}" for i, t in enumerate(items[:15]))
         await message.reply(f"Now: **{info.title}**\n\n**Up next**\n{lines}")
         return
     await message.reply(
@@ -224,7 +197,7 @@ async def main() -> None:
     try:
         await asyncio.Event().wait()
     finally:
-        await factory.leave_all()
+        await ay.leave_all()
         await bot.stop()
         await assistant.stop()
 

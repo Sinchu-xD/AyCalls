@@ -51,7 +51,7 @@ from .state import StateMachine
 
 logger = get_logger("player")
 
-__all__ = ["Player"]
+__all__ = ["Player", "AyPlayer"]
 
 StreamEndCallback = Callable[[AudioSource, StreamEndReason], Awaitable[None] | None]
 
@@ -503,3 +503,7 @@ def _log_task_exception(task: asyncio.Task[Any]) -> None:
     exc = task.exception()
     if exc is not None:
         logger.error("Background task failed: %r", exc, exc_info=exc)
+
+
+#: Branded alias.
+AyPlayer = Player

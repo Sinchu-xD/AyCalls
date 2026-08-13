@@ -234,10 +234,10 @@ async def test_playback_controls_over_a_live_transport(
         await call.join(CHAT_ID)
         await sfu.start_receiver(call.ssrc)
 
-        # add() on an idle call starts playback; on a busy call it queues.
-        track, started = await call.add(str(long_tone_wav))
+        # play() on an idle call starts playback; on a busy call it queues. No add/queue.
+        track, started = await call.play(str(long_tone_wav))
         assert started is True and track.uri == str(long_tone_wav)
-        queued, started = await call.add(str(short_mp3))
+        queued, started = await call.play(str(short_mp3))
         assert started is False and len(call.queue) == 1
 
         # real audio reaches the far end
@@ -261,11 +261,14 @@ async def test_playback_controls_over_a_live_transport(
         assert await call.rewind(2.0) == pytest.approx(1.0, abs=0.05)
         assert await call.replay() == 0.0
 
-        # loop modes from plain strings, as a chat command would send them
-        assert call.set_loop("one") is LoopMode.TRACK
-        assert call.set_loop("all") is LoopMode.QUEUE
-        call.loop = "off"
-        assert call.loop is LoopMode.OFF
+        # loop() takes counts, names, or "shuffle" — a chat command can pass anything
+        assert await call.loop("one") is LoopMode.TRACK
+        assert await call.loop("all") is LoopMode.QUEUE
+        assert await call.loop(3) is LoopMode.TIMES and call.queue.loop_times == 3
+        assert await call.loop("shuffle") is LoopMode.QUEUE and call.queue.auto_shuffle
+        call.loop = "off"                       # assignment still works
+        assert call.loop_mode is LoopMode.OFF
+        assert await call.loop() is LoopMode.OFF  # no argument = read it back
 
         # now_playing snapshot
         snapshot = call.now_playing

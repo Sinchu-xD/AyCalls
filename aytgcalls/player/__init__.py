@@ -1,7 +1,7 @@
 """Playback: player, queue, state machine."""
 
-from .player import Player
-from .queue import TrackQueue
+from .player import AyPlayer, Player
+from .queue import AyQueue, TrackQueue
 from .state import StateMachine
 
-__all__ = ["Player", "TrackQueue", "StateMachine"]
+__all__ = ["AyPlayer", "AyQueue", "Player", "TrackQueue", "StateMachine"]

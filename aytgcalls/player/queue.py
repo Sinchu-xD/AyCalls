@@ -17,19 +17,29 @@ from ..types import AudioSource, LoopMode
 
 logger = get_logger("player.queue")
 
-__all__ = ["TrackQueue"]
+__all__ = ["TrackQueue", "AyQueue"]
 
 
 class TrackQueue:
     """An async-safe playlist."""
 
-    def __init__(self, *, loop: LoopMode = LoopMode.OFF, history_size: int = 50) -> None:
+    def __init__(
+        self,
+        *,
+        loop: LoopMode = LoopMode.OFF,
+        history_size: int = 50,
+        loop_times: int = 0,
+    ) -> None:
         self._items: list[AudioSource] = []
         self._current: AudioSource | None = None
         self._history: list[AudioSource] = []
         self._history_size = history_size
         self._lock = asyncio.Lock()
         self.loop: LoopMode = loop
+        #: Remaining repeats when :attr:`loop` is :attr:`LoopMode.TIMES`.
+        self.loop_times = loop_times
+        #: Reshuffle the pending list every time the queue wraps around.
+        self.auto_shuffle = False
 
     # -- introspection ------------------------------------------------------------------
 
@@ -118,10 +128,18 @@ class TrackQueue:
             finished = self._current
             if self.loop is LoopMode.TRACK and finished is not None:
                 return finished
+            if self.loop is LoopMode.TIMES and finished is not None and self.loop_times > 0:
+                self.loop_times -= 1
+                if self.loop_times == 0:
+                    # Repeats used up: fall back to normal FIFO from here on.
+                    self.loop = LoopMode.OFF
+                return finished
             if finished is not None:
                 self._push_history(finished)
                 if self.loop is LoopMode.QUEUE:
                     self._items.append(finished)
+                    if self.auto_shuffle:
+                        random.shuffle(self._items)
             self._current = self._items.pop(0) if self._items else None
             return self._current
 
@@ -164,8 +182,13 @@ class TrackQueue:
             self._items.clear()
             self._history.clear()
             self._current = None
+            self.loop_times = 0
 
     def _push_history(self, track: AudioSource) -> None:
         self._history.append(track)
         if len(self._history) > self._history_size:
             del self._history[0 : len(self._history) - self._history_size]
+
+
+#: Branded alias.
+AyQueue = TrackQueue

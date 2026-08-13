@@ -6,6 +6,7 @@ from .http import HttpStreamReader
 from .metadata import MediaInfo, probe_media_info
 from .opus import OpusEncoder, opus_available
 from .source import probe_source, validate_source
+from .telegram import TelegramDownloader, is_telegram_media
 from .volume import apply_gain, percent_to_gain, telegram_volume
 
 __all__ = [
@@ -15,6 +16,8 @@ __all__ = [
     "HttpStreamReader",
     "MediaInfo",
     "probe_media_info",
+    "TelegramDownloader",
+    "is_telegram_media",
     "OpusEncoder",
     "opus_available",
     "probe_source",

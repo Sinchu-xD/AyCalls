@@ -14,7 +14,7 @@ from typing import Any
 from .exceptions import FFmpegNotInstalled
 from .types import FRAME_MS
 
-__all__ = ["TelegramCredentials", "CallConfig", "env_flag"]
+__all__ = ["TelegramCredentials", "CallConfig", "env_flag", "AyConfig", "AyCreds"]
 
 
 def env_flag(name: str, default: bool = False) -> bool:
@@ -122,6 +122,16 @@ class CallConfig:
     #: Seconds to wait for ICE + DTLS to come up.
     connect_timeout: float = 20.0
 
+    # --- automation ----------------------------------------------------------
+    #: ``play()`` joins the voice chat by itself when it is not joined yet.
+    auto_join: bool = True
+    #: Leave the voice chat automatically once the queue runs out.
+    auto_leave: bool = True
+    #: Grace period before auto-leaving, so a quick follow-up request keeps the call.
+    auto_leave_delay: float = 3.0
+    #: Where Telegram media is downloaded to. ``None`` uses a temporary directory.
+    download_dir: str | None = None
+
     # --- signaling -----------------------------------------------------------
     #: Seconds between ``phone.CheckGroupCall`` keepalives.
     keepalive_interval: float = 10.0
@@ -182,3 +192,8 @@ class CallConfig:
                 return self.ffmpeg_path
             raise FFmpegNotInstalled(self.ffmpeg_path)
         return found
+
+
+#: Branded aliases.
+AyConfig = CallConfig
+AyCreds = TelegramCredentials

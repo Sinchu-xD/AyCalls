@@ -25,6 +25,7 @@ from ..exceptions import (
     TransportError,
 )
 from ..logger import dump_signaling, get_logger
+from ..media.telegram import TelegramDownloader, is_telegram_media
 from ..media.volume import telegram_volume
 from ..player.player import Player
 from ..player.queue import TrackQueue
@@ -51,7 +52,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 logger = get_logger("call")
 
-__all__ = ["GroupCall"]
+__all__ = ["GroupCall", "AyCall"]
 
 StreamEndHandler = Callable[["GroupCall", AudioSource, StreamEndReason], Awaitable[None] | None]
 DisconnectHandler = Callable[["GroupCall", DisconnectReason], Awaitable[None] | None]
@@ -67,6 +68,7 @@ class GroupCall:
     def __init__(
         self,
         client: Client,
+        chat_id: int | str | None = None,
         *,
         config: CallConfig | None = None,
         queue: TrackQueue | None = None,
@@ -86,7 +88,9 @@ class GroupCall:
 
         self._transport: TelegramTransport | None = None
         self._discovered: DiscoveredCall | None = None
-        self._chat_id: int | str | None = None
+        self._chat_id: int | str | None = chat_id
+        self._downloader = TelegramDownloader(client, directory=self.config.download_dir)
+        self._auto_leave_task: asyncio.Task[None] | None = None
         self._join_as: Any = None
         self._invite_hash: str | None = None
         self._joined = asyncio.Event()
@@ -108,6 +112,9 @@ class GroupCall:
 
         self._stream_end_handlers: list[StreamEndHandler] = []
         self._disconnect_handlers: list[DisconnectHandler] = []
+
+        # Auto-leave when the queue runs dry, cancelled the moment playback resumes.
+        self.player.state.on_change(self._on_player_state)
 
     # -- introspection -----------------------------------------------------------------
 
@@ -150,6 +157,10 @@ class GroupCall:
         return handler
 
     def _handle_stream_end(self, source: AudioSource, reason: StreamEndReason) -> None:
+        # A looping track is about to play again, so keep its download around.
+        repeating = self.queue.current is not None and self.queue.current.id == source.id
+        if not repeating and self._downloader.owns(source):
+            self._downloader.release(source)
         for handler in self._stream_end_handlers:
             try:
                 result = handler(self, source, reason)
@@ -238,6 +249,7 @@ class GroupCall:
             return
         self._leaving = True
         try:
+            self._cancel_auto_leave()
             await self._reconnect.cancel()
             await self._stop_keepalive()
             self._unsubscribe_updates()
@@ -257,6 +269,7 @@ class GroupCall:
                 except TelegramCallError as exc:
                     logger.warning("phone.leaveGroupCall failed (ignoring): %s", exc)
             self._joined.clear()
+            self._downloader.cleanup()
         finally:
             self._leaving = False
         await self._fire_disconnect(reason)
@@ -267,10 +280,70 @@ class GroupCall:
         if not self._joined.is_set():
             raise NotJoined("Not joined to a voice chat; call await call.join(chat_id) first.")
 
-    async def play(self, source: Any, *, replace: bool = True) -> AudioSource:
-        """Play a local file, an http(s) URL, or anything FFmpeg can decode."""
-        self._require_joined()
-        return await self.player.play(source, replace=replace)
+    async def play(
+        self,
+        source: Any,
+        *,
+        chat_id: int | str | None = None,
+        force: bool = False,
+    ) -> tuple[AudioSource, bool]:
+        """Play anything, handling everything else on its own.
+
+        This is the only entry point you need:
+
+        * **auto-joins** the voice chat if we are not in it yet;
+        * **auto-queues** when something is already playing (no separate ``add``);
+        * accepts a local path, an ``http(s)`` URL, **or a Telegram voice note / audio /
+          document / video message**, which is downloaded through the same session;
+        * the queue advances by itself, and the call **auto-leaves** when it runs dry.
+
+        :param source: path, URL, Kurigram ``Message``, media object, or ``AudioSource``.
+        :param chat_id: needed only if it was not given to the constructor.
+        :param force: jump the queue and start this track immediately.
+        :returns: ``(track, started_now)`` — ``started_now`` is ``False`` when it queued.
+        """
+        # A Telegram message/voice/audio has to be fetched before FFmpeg can see it.
+        if is_telegram_media(source):
+            source = await self._downloader.resolve(source)
+
+        await self._ensure_joined(chat_id)
+        self._cancel_auto_leave()
+
+        if self.player.state.is_active and not force:
+            track = await self.player.queue.add(source)
+            logger.info("Queued %s (position %d)", track.display_name, len(self.queue))
+            return track, False
+        return await self.player.play(source), True
+
+    async def add(
+        self,
+        source: Any,
+        *,
+        chat_id: int | str | None = None,
+        force: bool = False,
+    ) -> tuple[AudioSource, bool]:
+        """Alias for :meth:`play` — kept so ``/add`` style commands keep working."""
+        return await self.play(source, chat_id=chat_id, force=force)
+
+    async def _ensure_joined(self, chat_id: int | str | None = None) -> None:
+        """Join the voice chat if needed, using the chat id we were given."""
+        if chat_id is not None and chat_id != self._chat_id and self._joined.is_set():
+            raise AlreadyJoined(
+                f"Already joined {self._chat_id!r}; use a separate AyCall (or AyFac) "
+                f"for {chat_id!r}."
+            )
+        if self._joined.is_set():
+            return
+        target = chat_id if chat_id is not None else self._chat_id
+        if target is None:
+            raise NotJoined(
+                "No chat id known. Either construct AyCall(client, chat_id) or call "
+                "play(source, chat_id=...)."
+            )
+        if not self.config.auto_join:
+            raise NotJoined("auto_join is disabled; call await join(chat_id) first.")
+        logger.info("Auto-joining the voice chat in %s", target)
+        await self.join(target)
 
     async def pause(self) -> None:
         self._require_joined()
@@ -280,7 +353,16 @@ class GroupCall:
         self._require_joined()
         await self.player.resume()
 
-    async def stop(self, *, clear_queue: bool = True) -> None:
+    async def stop(self) -> None:
+        """Stop everything: clear the queue, stop playback and leave the voice chat.
+
+        Same as :meth:`end`. Use :meth:`stop_playback` to stop the audio but stay in the
+        call.
+        """
+        await self.end()
+
+    async def stop_playback(self, *, clear_queue: bool = True) -> None:
+        """Stop the audio but stay in the voice chat."""
         self._require_joined()
         await self.player.stop(clear_queue=clear_queue)
 
@@ -292,19 +374,6 @@ class GroupCall:
         """Go back to the previously played track."""
         self._require_joined()
         return await self.player.previous()
-
-    async def add(self, source: Any) -> tuple[AudioSource, bool]:
-        """Queue a track — and start playing immediately if nothing is playing.
-
-        This is the "fully automatic" entry point for a music bot: call it for every
-        request and the player figures out whether to play now or line up.
-
-        :returns: ``(track, started_now)``
-        """
-        self._require_joined()
-        if self.player.state.is_active:
-            return await self.player.queue.add(source), False
-        return await self.player.play(source), True
 
     # -- seeking ---------------------------------------------------------------------------
 
@@ -338,13 +407,58 @@ class GroupCall:
         """Drop every pending track; the current one keeps playing."""
         return await self.queue.clear()
 
-    def set_loop(self, mode: Any) -> LoopMode:
-        """Set the loop mode from a :class:`LoopMode`, a string, or a bool.
+    async def loop(self, value: Any = None) -> LoopMode:
+        """One call for every repeat behaviour.
 
-        ``"off"`` / ``"track"`` / ``"queue"`` and friendly aliases (``"one"``, ``"all"``)
-        are accepted so a chat command can be passed straight through.
+        ============================  ==========================================
+        ``await call.loop(3)``        repeat the current track 3 more times
+        ``await call.loop("track")``  repeat the current track forever
+        ``await call.loop("queue")``  loop the whole queue
+        ``await call.loop("shuffle")``shuffle now, then keep looping the queue
+        ``await call.loop("off")``    stop looping
+        ``await call.loop()``         just read the current mode
+        ============================  ==========================================
         """
+        if value is None:
+            return self.queue.loop
+
+        if isinstance(value, str) and value.strip().lower() in {"shuffle", "random", "mix"}:
+            await self.queue.shuffle()
+            self.queue.loop = LoopMode.QUEUE
+            self.queue.auto_shuffle = True
+            self.queue.loop_times = 0
+            logger.info("Shuffled the queue and enabled queue loop")
+            return self.queue.loop
+
+        mode = LoopMode.from_any(value)
+        self.queue.auto_shuffle = False
+        if mode is LoopMode.TIMES:
+            times = int(value) if not isinstance(value, LoopMode) else 1
+            self.queue.loop_times = max(1, times)
+            self.queue.loop = mode
+            logger.info("Looping the current track %d more time(s)", self.queue.loop_times)
+            return mode
+        self.queue.loop_times = 0
+        self.queue.loop = mode
+        logger.info("Loop mode: %s", mode.value)
+        return mode
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Make ``call.loop = "queue"`` behave like ``call.set_loop("queue")``.
+
+        ``loop`` is a method, so a plain assignment would silently replace it with a
+        string and break every later call. Intercepting it keeps both styles working.
+        """
+        if name == "loop" and not callable(value):
+            self.set_loop(value)
+            return
+        super().__setattr__(name, value)
+
+    def set_loop(self, mode: Any) -> LoopMode:
+        """Synchronous loop setter for simple modes (no shuffle)."""
         self.queue.loop = LoopMode.from_any(mode)
+        if self.queue.loop is LoopMode.TIMES:
+            self.queue.loop_times = max(1, int(mode))
         return self.queue.loop
 
     # -- playback state ---------------------------------------------------------------------
@@ -416,12 +530,50 @@ class GroupCall:
         await self.leave()
 
     @property
-    def loop(self) -> LoopMode:
+    def loop_mode(self) -> LoopMode:
+        """The active :class:`LoopMode` (set it with :meth:`loop`)."""
         return self.queue.loop
 
-    @loop.setter
-    def loop(self, mode: Any) -> None:
-        self.queue.loop = LoopMode.from_any(mode)
+    # -- auto-leave ---------------------------------------------------------------------------
+
+    def _on_player_state(self, previous: PlaybackState, current: PlaybackState) -> None:
+        """Arm or disarm auto-leave as playback starts and stops.
+
+        The player only reaches ``IDLE`` when the queue is exhausted, which is exactly the
+        moment a music bot should get out of the call.
+        """
+        if current is PlaybackState.PLAYING:
+            self._cancel_auto_leave()
+        elif current is PlaybackState.IDLE and self.config.auto_leave:
+            self._schedule_auto_leave()
+
+    def _schedule_auto_leave(self) -> None:
+        self._cancel_auto_leave()
+        if self._leaving or not self._joined.is_set():
+            return
+        self._auto_leave_task = asyncio.ensure_future(self._auto_leave_after_delay())
+
+    def _cancel_auto_leave(self) -> None:
+        task, self._auto_leave_task = self._auto_leave_task, None
+        if task is not None and not task.done():
+            task.cancel()
+
+    async def _auto_leave_after_delay(self) -> None:
+        """Leave once the queue has been empty for ``auto_leave_delay`` seconds."""
+        try:
+            await asyncio.sleep(self.config.auto_leave_delay)
+            if self._leaving or not self._joined.is_set():
+                return
+            if self.player.state.is_active:
+                return  # something started playing during the grace period
+            if len(self.queue) or self.queue.current is not None:
+                return  # a track was queued while we waited
+            logger.info("Queue finished — leaving the voice chat automatically")
+            await self.leave(reason=DisconnectReason.QUEUE_FINISHED)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Auto-leave failed")
 
     # -- keepalive ----------------------------------------------------------------------------
 
@@ -572,3 +724,7 @@ class GroupCall:
 
     async def __aexit__(self, *exc_info: object) -> None:
         await self.leave()
+
+
+#: Branded alias — this is the name the README uses.
+AyCall = GroupCall
