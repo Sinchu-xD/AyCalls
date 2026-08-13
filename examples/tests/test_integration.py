@@ -44,6 +44,8 @@ class FakeTelegram:
         self.handlers: list[Any] = []
         self.group_call: GroupCall | None = None
         self.left_source: int | None = None
+        #: When True, phone.checkGroupCall pretends the SFU forgot our source.
+        self.forget_sources = False
         self._accept_task: asyncio.Task[None] | None = None
 
     # -- Kurigram surface ---------------------------------------------------------
@@ -76,7 +78,7 @@ class FakeTelegram:
         if isinstance(request, raw.functions.phone.JoinGroupCall):
             return await self._join(request)
         if isinstance(request, raw.functions.phone.CheckGroupCall):
-            return list(request.sources)
+            return [] if self.forget_sources else list(request.sources)
         if isinstance(request, raw.functions.phone.LeaveGroupCall):
             self.left_source = request.source
             return None

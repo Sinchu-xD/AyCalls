@@ -426,3 +426,44 @@ async def test_ayfac_controls_reject_unknown_chats() -> None:
     with pytest.raises(KeyError):
         _ = fac[-100999]
     assert fac.now_playing(-100999) is None
+
+
+# --------------------------------------------------------------------------- SFU drop
+
+
+async def test_keepalive_notices_the_sfu_dropped_us(long_tone_wav: Path) -> None:
+    """phone.checkGroupCall stops listing our source -> we treat the call as gone.
+
+    With auto_reconnect off this must end the call cleanly rather than sit there sending
+    RTP into a session Telegram has forgotten.
+    """
+    sfu = FakeSfu()
+    await sfu.gather()
+    client = FakeTelegram(sfu)
+    call = AyCall(
+        client,
+        CHAT_ID,
+        config=_config(auto_leave=False, keepalive_interval=0.15, auto_reconnect=False),
+    )
+    client.group_call = call
+    reasons: list[DisconnectReason] = []
+
+    @call.on_disconnect
+    async def _(_call: AyCall, reason: DisconnectReason) -> None:
+        reasons.append(reason)
+
+    try:
+        await call.play(str(long_tone_wav))
+        assert call.is_connected
+        # From now on the "SFU" claims it has never heard of our source.
+        client.forget_sources = True
+        for _ in range(60):
+            if not call.is_connected:
+                break
+            await asyncio.sleep(0.1)
+        assert not call.is_connected, "keepalive never noticed the drop"
+        assert DisconnectReason.SFU_TIMEOUT in reasons
+    finally:
+        await call.leave()
+        await sfu.close()
+        await client.cleanup()
