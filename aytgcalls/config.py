@@ -111,7 +111,7 @@ class CallConfig:
     #: Fetch http(s) sources with aiohttp and pipe them into FFmpeg's stdin instead of
     #: letting FFmpeg open the URL. Required on FFmpeg builds without a working resolver
     #: (static builds), and gives resumable Range retries plus custom headers.
-    fetch_urls_with_python: bool = True
+    fetch_urls_with_python: bool = False
     #: Extra HTTP headers for URL sources (e.g. Referer, Authorization, Cookie).
     http_headers: dict[str, str] | None = None
 
