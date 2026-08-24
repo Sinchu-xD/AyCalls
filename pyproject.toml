@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aytgcalls"
-version = "0.2.0"
-description = "Play audio into Telegram group voice chats with Kurigram (Pyrogram) + aiortc. No py-tgcalls."
+version = "0.3.0"
+description = "Play audio into Telegram group voice chats with Kurigram (Pyrogram) + aiortc."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
