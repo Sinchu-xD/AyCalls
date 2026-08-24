@@ -403,6 +403,9 @@ def join_response_to_sdp(
     mid: str = "0",
     direction: str = "recvonly",
     ice_lite: bool = True,
+    video_ssrc: int | None = None,
+    video_payload_type: int = 102,
+    video_codec: str = "H264",
 ) -> str:
     """Render a :class:`JoinResponse` as a unified-plan SDP **answer**.
 
@@ -416,6 +419,7 @@ def join_response_to_sdp(
         )
     payload_types = response.payload_types or (OPUS_DEFAULT,)
     pt_ids = " ".join(str(pt.id) for pt in payload_types)
+
     lines = [
         "v=0",
         f"o=- {session_id} 2 IN IP4 0.0.0.0",
@@ -423,12 +427,16 @@ def join_response_to_sdp(
         "t=0 0",
         f"a=group:BUNDLE {mid}",
         "a=msid-semantic: WMS *",
-        f"m=audio 9 UDP/TLS/RTP/SAVPF {pt_ids}",
-        "c=IN IP4 0.0.0.0",
-        "a=rtcp:9 IN IP4 0.0.0.0",
-        f"a=ice-ufrag:{response.transport.ufrag}",
-        f"a=ice-pwd:{response.transport.pwd}",
     ]
+
+    if video_ssrc is not None:
+        lines.append(f"a=group:BUNDLE {mid}")
+
+    lines.append(f"m=audio 9 UDP/TLS/RTP/SAVPF {pt_ids}")
+    lines.append("c=IN IP4 0.0.0.0")
+    lines.append("a=rtcp:9 IN IP4 0.0.0.0")
+    lines.append(f"a=ice-ufrag:{response.transport.ufrag}")
+    lines.append(f"a=ice-pwd:{response.transport.pwd}")
     if ice_lite:
         lines.append("a=ice-lite")
     for fp in response.transport.fingerprints:
@@ -454,6 +462,24 @@ def join_response_to_sdp(
         lines.append("a=end-of-candidates")
     if response.server_ssrc is not None:
         lines.append(f"a=ssrc:{response.server_ssrc} cname:tgcall")
+
+    if video_ssrc is not None:
+        video_mid = "1"
+        lines.append(f"m=video 9 UDP/TLS/RTP/SAVPF {video_payload_type}")
+        lines.append("c=IN IP4 0.0.0.0")
+        lines.append("a=rtcp:9 IN IP4 0.0.0.0")
+        lines.append(f"a=ice-ufrag:{response.transport.ufrag}")
+        lines.append(f"a=ice-pwd:{response.transport.pwd}")
+        lines.append(f"a=mid:{video_mid}")
+        lines.append("a=sendonly")
+        lines.append("a=rtcp-mux")
+        lines.append(f"a=rtpmap:{video_payload_type} {video_codec}/90000")
+        lines.append("a=rtcp-fb:102 nack")
+        lines.append("a=rtcp-fb:102 nack pli")
+        lines.append("a=fmtp:102 profile-level-id=42e01f;level-asymmetry-allowed=1")
+        lines.append(f"a=ssrc:{video_ssrc} cname:aytgcalls-video")
+        lines.append("a=end-of-candidates")
+
     return "\r\n".join(lines) + "\r\n"
 
 
@@ -571,14 +597,15 @@ def sdp_answer_to_join_response(sdp: str) -> JoinResponse:
 class JoinPayload:
     """The JSON body of ``phone.joinGroupCall``'s ``params`` argument.
 
-    ``ssrc-groups`` is intentionally never emitted: this package publishes audio only,
-    and Telegram rejects an empty group list (PROTOCOL.md §2).
+    When publishing video, ``video_ssrc`` is set and ``ssrc-groups`` is emitted
+    as a SIM (Simulcast) group binding the audio and video SSRCs together.
     """
 
     ssrc: int
     ufrag: str
     pwd: str
     fingerprints: tuple[Fingerprint, ...]
+    video_ssrc: int | None = None
 
     def to_json(self) -> dict[str, Any]:
         if not 0 < self.ssrc < 2**31:
@@ -587,12 +614,24 @@ class JoinPayload:
             raise TransportError("Join payload requires local ICE ufrag and pwd")
         if not self.fingerprints:
             raise TransportError("Join payload requires a local DTLS fingerprint")
-        return {
+        result: dict[str, Any] = {
             "ssrc": self.ssrc,
             "ufrag": self.ufrag,
             "pwd": self.pwd,
             "fingerprints": [fp.to_json() for fp in self.fingerprints],
         }
+        if self.video_ssrc is not None:
+            if not 0 < self.video_ssrc < 2**31:
+                raise TransportError(
+                    f"Video SSRC must be a non-zero positive int32, got {self.video_ssrc}"
+                )
+            result["ssrc-groups"] = [
+                {
+                    "ssrcs": [self.ssrc, self.video_ssrc],
+                    "type": "sim",
+                }
+            ]
+        return result
 
     def to_data_json(self) -> str:
         return json.dumps(self.to_json())

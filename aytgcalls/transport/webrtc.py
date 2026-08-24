@@ -15,6 +15,12 @@ public API — :class:`RTCIceGatherer`, :class:`RTCIceTransport`, :class:`RTCDtl
 :class:`RTCRtpSender` — and those let us set ICE credentials, DTLS role, payload type and
 SSRC exactly. :mod:`aytgcalls.transport.sdp` remains a real, tested bridge for anything
 that wants the SDP view (and is what ``PROTOCOL.md`` documents).
+
+Video support
+-------------
+When a video track is provided, the transport creates a second RTP sender on a separate
+m-line (mid=1). The audio and video SSRCs are bound together in the join payload via an
+``ssrc-groups`` SIM entry so Telegram's SFU knows they belong to the same publisher.
 """
 
 from __future__ import annotations
@@ -98,8 +104,10 @@ class TelegramTransport:
         stats: CallStats | None = None,
         mid: str = "0",
         cname: str = "aytgcalls",
+        video_track: "H264StreamTrack | None" = None,
     ) -> None:
         self._track = track
+        self._video_track = video_track
         self._ice_servers = ice_servers
         self._connect_timeout = connect_timeout
         self._opus_bitrate = opus_bitrate
@@ -107,17 +115,24 @@ class TelegramTransport:
         self._mid = mid
         self._cname = cname
 
-        self.ssrc: int = random_ssrc()
+        self.audio_ssrc: int = random_ssrc()
+        self.video_ssrc: int | None = random_ssrc() if video_track is not None else None
         self._ufrag = random_ufrag()
         self._pwd = random_pwd()
         self._certificate: RTCCertificate | None = None
         self._ice: Any = None
         self._dtls: RTCDtlsTransport | None = None
-        self._sender: RTCRtpSender | None = None
+        self._audio_sender: RTCRtpSender | None = None
+        self._video_sender: RTCRtpSender | None = None
         self._closed = False
         self._connected = asyncio.Event()
 
     # -- state ------------------------------------------------------------------------
+
+    @property
+    def ssrc(self) -> int:
+        """The audio SSRC (committed in ``phone.joinGroupCall``)."""
+        return self.audio_ssrc
 
     @property
     def is_connected(self) -> bool:
@@ -168,10 +183,11 @@ class TelegramTransport:
 
         fingerprint = self._local_fingerprint()
         payload = JoinPayload(
-            ssrc=self.ssrc,
+            ssrc=self.audio_ssrc,
             ufrag=local.usernameFragment or self._ufrag,
             pwd=local.password or self._pwd,
             fingerprints=(fingerprint,),
+            video_ssrc=self.video_ssrc,
         )
         logger.info("Local transport ready (ssrc=%d, ufrag=%s)", self.ssrc, payload.ufrag)
         return payload
@@ -284,23 +300,60 @@ class TelegramTransport:
             logger.debug("Ignoring unsupported RTP header extensions: %s", dropped)
 
         sender = RTCRtpSender(self._track, self._dtls)
-        # Pin the SSRC we already committed to in phone.joinGroupCall.
-        sender._ssrc = self.ssrc
+        sender._ssrc = self.audio_ssrc
         parameters = RTCRtpSendParameters(
             codecs=[codec],
             headerExtensions=extensions,
             muxId=self._mid,
-            rtcp=RTCRtcpParameters(cname=self._cname, ssrc=self.ssrc, mux=True),
-            encodings=[RTCRtpEncodingParameters(ssrc=self.ssrc, payloadType=opus.id)],
+            rtcp=RTCRtcpParameters(cname=self._cname, ssrc=self.audio_ssrc, mux=True),
+            encodings=[RTCRtpEncodingParameters(ssrc=self.audio_ssrc, payloadType=opus.id)],
         )
         await sender.send(parameters)
-        self._sender = sender
+        self._audio_sender = sender
         self._tune_opus_bitrate()
         logger.info(
-            "RTP sender started (pt=%d, ssrc=%d, %d header extensions)",
+            "Audio RTP sender started (pt=%d, ssrc=%d)",
             opus.id,
-            self.ssrc,
-            len(extensions),
+            self.audio_ssrc,
+        )
+
+        if self._video_track is not None and self.video_ssrc is not None:
+            await self._start_video_sender(response)
+
+    async def _start_video_sender(self, response: JoinResponse) -> None:
+        """Start the H.264 video RTP sender on the second m-line."""
+        assert self._dtls is not None
+        assert self._video_track is not None
+        assert self.video_ssrc is not None
+
+        video_pt = 102  # Telegram's canonical H.264 payload type
+        codec = RTCRtpCodecParameters(
+            mimeType="video/H264",
+            clockRate=90000,
+            channels=0,
+            payloadType=video_pt,
+            parameters={
+                "packetization-mode": "1",
+                "profile-level-id": "42e01f",
+                "level-asymmetry-allowed": "1",
+            },
+        )
+
+        sender = RTCRtpSender(self._video_track, self._dtls)
+        sender._ssrc = self.video_ssrc
+        parameters = RTCRtpSendParameters(
+            codecs=[codec],
+            headerExtensions=[],
+            muxId="1",
+            rtcp=RTCRtcpParameters(cname="aytgcalls-video", ssrc=self.video_ssrc, mux=True),
+            encodings=[RTCRtpEncodingParameters(ssrc=self.video_ssrc, payloadType=video_pt)],
+        )
+        await sender.send(parameters)
+        self._video_sender = sender
+        logger.info(
+            "Video RTP sender started (pt=%d, ssrc=%d)",
+            video_pt,
+            self.video_ssrc,
         )
 
     def _tune_opus_bitrate(self) -> None:
@@ -310,12 +363,12 @@ class TelegramTransport:
         once it exists. Failure is logged and ignored — 96 kbps is inside Telegram's
         acceptable range anyway.
         """
-        if self._opus_bitrate == 96_000 or self._sender is None:
+        if self._opus_bitrate == 96_000 or self._audio_sender is None:
             return
 
         async def _apply() -> None:
             for _ in range(50):
-                encoder = getattr(self._sender, "_RTCRtpSender__encoder", None)
+                encoder = getattr(self._audio_sender, "_RTCRtpSender__encoder", None)
                 codec_ctx = getattr(encoder, "codec", None)
                 if codec_ctx is not None:
                     try:
@@ -332,16 +385,17 @@ class TelegramTransport:
     # -- stats / teardown ---------------------------------------------------------------
 
     async def refresh_stats(self) -> CallStats:
-        """Pull ``packetsSent`` / ``bytesSent`` from the RTP sender."""
-        if self._sender is not None:
-            try:
-                report = await self._sender.getStats()
-                for entry in report.values():
-                    if getattr(entry, "type", "") == "outbound-rtp":
-                        self._stats.packets_sent = int(getattr(entry, "packetsSent", 0))
-                        self._stats.bytes_sent = int(getattr(entry, "bytesSent", 0))
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("getStats() failed: %s", exc)
+        """Pull ``packetsSent`` / ``bytesSent`` from the RTP sender(s)."""
+        for sender in (self._audio_sender, self._video_sender):
+            if sender is not None:
+                try:
+                    report = await sender.getStats()
+                    for entry in report.values():
+                        if getattr(entry, "type", "") == "outbound-rtp":
+                            self._stats.packets_sent = int(getattr(entry, "packetsSent", 0))
+                            self._stats.bytes_sent = int(getattr(entry, "bytesSent", 0))
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug("getStats() failed: %s", exc)
         self._stats.ice_state = self.ice_state
         self._stats.dtls_state = self.dtls_state
         return self._stats
@@ -352,12 +406,14 @@ class TelegramTransport:
             return
         self._closed = True
         self._connected.clear()
-        if self._sender is not None:
-            try:
-                await self._sender.stop()
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("Sender stop failed: %s", exc)
-            self._sender = None
+        for sender in (self._audio_sender, self._video_sender):
+            if sender is not None:
+                try:
+                    await sender.stop()
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug("Sender stop failed: %s", exc)
+        self._audio_sender = None
+        self._video_sender = None
         if self._dtls is not None:
             try:
                 await self._dtls.stop()

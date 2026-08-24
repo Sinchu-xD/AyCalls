@@ -24,7 +24,7 @@ logger = get_logger("media.http")
 
 __all__ = ["HttpStreamReader", "DEFAULT_USER_AGENT"]
 
-DEFAULT_USER_AGENT = "aytgcalls/0.1 (+https://github.com/aytgcalls/aytgcalls)"
+DEFAULT_USER_AGENT = "aytgcalls/0.2 (+https://github.com/aytgcalls/aytgcalls)"
 
 
 class HttpStreamReader:

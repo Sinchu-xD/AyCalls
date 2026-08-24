@@ -11,3 +11,4 @@ venv/
 *.session
 *.session-journal
 .env
+_creds.env

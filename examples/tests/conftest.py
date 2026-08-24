@@ -104,17 +104,21 @@ async def range_server(long_tone_bytes: bytes, long_tone_mp3_bytes: bytes):
 
     async def audio(request: web.Request) -> web.StreamResponse:
         payload, content_type = bodies[request.path]
-        start = 0
-        if (header := request.headers.get("Range")):
-            start = int(header.split("=")[1].split("-")[0])
-        headers = {"Content-Type": content_type, "Accept-Ranges": "bytes"}
-        if start:
-            headers["Content-Range"] = f"bytes {start}-{len(payload) - 1}/{len(payload)}"
-        response = web.StreamResponse(status=206 if start else 200, headers=headers)
-        response.content_length = len(payload) - start
-        await response.prepare(request)
-        await response.write(payload[start:])
-        await response.write_eof()
+        has_range = request.headers.get("Range")
+        start = int(has_range.split("=")[1].split("-")[0]) if has_range else 0
+
+        response = web.Response(
+            body=payload[start:],
+            status=206 if has_range else 200,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Type": content_type,
+            },
+        )
+        if has_range:
+            response.headers["Content-Range"] = (
+                f"bytes {start}-{len(payload) - 1}/{len(payload)}"
+            )
         return response
 
     app = web.Application()

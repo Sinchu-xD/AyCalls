@@ -8,21 +8,18 @@ Play audio into **Telegram group voice chats** from Python.
 * **No py-tgcalls, no tgcalls, no Telethon.** Not wrapped, not vendored, not a dependency.
 
 ```python
-from aytgcalls import AyCall
+from aytgcalls import AyClient, AyCreds
 
-call = AyCall(user_client, chat_id)   # a Kurigram USER session
-await call.play("song.mp3")           # joins, plays, queues, and leaves — all on its own
+client = AyClient(AyCreds.from_env())
+await client.start()
+
+await client.play(-1001234567890, "song.mp3")   # auto-join + play
+await client.skip(-1001234567890)
+await client.end(-1001234567890)
+await client.stop()
 ```
 
-No `join()`, no `add()`, no `leave()`. `play()` is the whole API:
-
-| You call | It handles |
-|---|---|
-| `await call.play(src)` | **joins** the voice chat if needed |
-| `await call.play(src)` again while busy | **queues** it (no separate `add`) |
-| track finishes | **advances** the queue by itself |
-| queue runs out | **leaves** the voice chat automatically |
-| `await call.play(message)` | **downloads** a Telegram voice note / audio and plays it |
+Every action takes `chat_id` first — one class, multiple voice chats.
 
 ---
 
@@ -35,11 +32,15 @@ No `join()`, no `add()`, no `leave()`. `play()` is the whole API:
   - [FFmpeg and libopus](#ffmpeg-and-libopus)
 - [Generating a STRING_SESSION](#generating-a-string_session)
 - [Quick start](#quick-start)
+- [Three ways to use it](#three-ways-to-use-it)
+  - [AyClient — one class, everything](#ayclient--one-class-everything)
+  - [AyFac — factory for many chats](#ayfac--factory-for-many-chats)
+  - [AyCall — one call, full control](#aycall--one-call-full-control)
 - [API reference](#api-reference)
 - [Queue](#queue)
 - [Events](#events)
-- [Multiple chats](#multiple-chats)
-- [Bot command interface + assistant](#bot-command-interface--assistant)
+- [Video / screen sharing](#video--screen-sharing)
+- [Bot command interface](#bot-command-interface)
 - [Configuration](#configuration)
 - [Error handling](#error-handling)
 - [Verifying it works on a VPS](#verifying-it-works-on-a-vps)
@@ -61,15 +62,14 @@ InputGroupCall ──► phone.joinGroupCall(params = {ssrc, ufrag, pwd, fingerp
                    UpdateGroupCallConnection
                    {transport:{…}, audio:{payload-types, rtp-hdrexts}}
                               │
-   ┌──────────────────────────┴───────────────────────────┐
-   │  ICE (controlling)  →  DTLS (client)  →  SRTP keys   │
-   └──────────────────────────┬───────────────────────────┘
+   ┌──────────────────────────┴───────────────────────────────────────┐
+   │  ICE (controlling)  →  DTLS (client)  →  SRTP keys              │
+   └──────────────────────────┬───────────────────────────────────────┘
                               ▼
  file/URL ─ FFmpeg ─► PCM s16le 48k/2 ─► ring buffer ─► gain ─► Opus 20 ms ─► RTP ─► SFU
 ```
 
-The full protocol write-up, including which parts are certain and which need live
-verification, is in [`PROTOCOL.md`](PROTOCOL.md).
+The full protocol write-up is in [`PROTOCOL.md`](PROTOCOL.md).
 
 ## A bot cannot join a voice chat
 
@@ -82,8 +82,7 @@ So `aytgcalls` uses the standard two-account pattern:
 | **User** ("assistant"), via `API_ID` + `API_HASH` + `STRING_SESSION` | Joins the call and streams audio. **Required.** |
 | **Bot**, via `BOT_TOKEN` | Optional. Parses `/play`, `/skip`… and dispatches to the assistant. Never touches the call. |
 
-`GroupCall` checks this at join time and raises `BotClientNotAllowed` with an explanation
-if you hand it a bot session.
+`GroupCall` checks this at join time and raises `BotClientNotAllowed` if you hand it a bot session.
 
 ## Installation
 
@@ -156,199 +155,179 @@ session string once.
 
 > **Treat `STRING_SESSION` like a password.** Anyone with it has full access to that
 > account. Keep it in an environment variable or a secret manager. `aytgcalls` never
-> hardcodes credentials and never logs them — debug logging redacts ICE passwords, DTLS
-> fingerprints, access hashes and session strings.
+> hardcodes credentials and never logs them.
 
 ## Quick start
 
 ```python
 import asyncio
-from aytgcalls import AyCall, AyCreds
-from aytgcalls.telegram import build_user_client
+from aytgcalls import AyClient, AyCreds
 
 async def main():
-    client = build_user_client(AyCreds.from_env())   # API_ID/API_HASH/STRING_SESSION
+    client = AyClient(AyCreds.from_env())
     await client.start()
 
-    call = AyCall(client, -1001234567890)   # the voice chat must already be running
-    await call.play("song.mp3")             # joins + plays; returns immediately
-
+    await client.play(-1001234567890, "song.mp3")   # auto-join + play
     await asyncio.sleep(30)
-    await call.end()                        # or just let it auto-leave
     await client.stop()
 
 asyncio.run(main())
 ```
 
-For a bot serving many chats, `AyFac` collapses it to a single line per request:
+That's it — one `play()` call handles join, queue, play, and auto-leave.
+
+## Three ways to use it
+
+### AyClient — one class, everything
+
+The recommended entry point. One instance per bot, multiple voice chats:
+
+```python
+from aytgcalls import AyClient, AyCreds
+
+client = AyClient(AyCreds.from_env())
+await client.start()
+
+# every method takes chat_id first
+await client.play(chat_id, "song.mp3")         # auto-join + play or queue
+await client.pause(chat_id)
+await client.resume(chat_id)
+await client.skip(chat_id)
+await client.seek(chat_id, 45)
+await client.forward(chat_id, 10)
+await client.rewind(chat_id, 10)
+await client.volume(chat_id, 80)
+await client.mute(chat_id)
+await client.unmute(chat_id)
+await client.loop(chat_id, "queue")
+await client.shuffle(chat_id)
+await client.play_video(chat_id, "clip.mp4")
+
+# introspection
+print(client.position(chat_id))
+print(client.now_playing(chat_id))
+print(client.is_connected(chat_id))
+
+# lifecycle
+await client.end(chat_id)     # stop + leave this chat
+await client.stop()           # leave all + shutdown
+```
+
+`AyClient` wraps `AyFac` internally and mirrors every per-chat control. It also accepts a
+pre-built Pyrogram `Client` if you need more control over startup.
+
+### AyFac — factory for many chats
+
+For when you want the factory directly:
 
 ```python
 from aytgcalls import AyFac
 
-ay = AyFac(client)
-await ay.play(chat_id, "song.mp3")      # creates, joins, plays or queues
-await ay.skip(chat_id)
-await ay.loop(chat_id, 3)
-await ay.stop(chat_id)                  # stop + leave
+fac = AyFac(user_client)
+await fac.play(chat_id, "song.mp3")      # creates, joins, plays or queues
+await fac.pause(chat_id)
+await fac.skip(chat_id)
+await fac.volume(chat_id, 80)
+await fac.stop(chat_id)                  # stop + leave
+await fac.leave_all()                    # shutdown
 ```
 
-Local files, URLs, **Telegram voice notes / audio messages**, and anything FFmpeg can
-decode all work:
+### AyCall — one call, full control
 
-```python
-await call.play("song.mp3")
-await call.play("/music/track.flac")
-await call.play("https://example.com/audio.mp3")
-await call.play("https://example.com/live-radio.aac")
-
-await call.play(message)                    # a Kurigram Message: voice / audio / document
-await call.play(message.reply_to_message)   # "reply to a voice note with /play"
-await call.play(message.voice)              # or the media object directly
-```
-
-Telegram media is downloaded through the same MTProto session that is already in the call,
-into a temp directory, and **deleted as soon as the track finishes** — nothing piles up on
-disk. A looping track keeps its file until the loop ends.
-
-## API reference
-
-```python
-call = AyCall(user_client, chat_id, config=AyConfig())
-
-# --- the only thing you normally call ------------------------------------------
-await call.play(source)                 # joins / plays / queues, all automatic
-await call.play(source, force=True)     # jump the queue and start now
-await call.play(source, chat_id=...)    # if the chat id was not given to AyCall()
-
-# --- transport ----------------------------------------------------------------
-await call.pause()
-await call.resume()
-await call.skip()                       # -> next AudioSource or None
-await call.previous()                   # -> back through the history
-await call.stop()                       # stop + leave   (same as end())
-await call.stop_playback()              # stop but stay in the call
-await call.end()
-
-# --- seeking -----------------------------------------------------------------
-await call.seek(90)                     # absolute, seconds -> where we landed
-await call.forward(10)                  # relative
-await call.rewind(10)                   # relative, clamped at 0
-await call.replay()                     # restart the current track
-
-# --- repeat / shuffle ---------------------------------------------------------
-await call.loop(3)                      # repeat the current track 3 more times
-await call.loop("track")                # repeat forever
-await call.loop("queue")                # loop the whole queue
-await call.loop("shuffle")              # shuffle now, then keep looping
-await call.loop("off")
-await call.loop()                       # read the current mode
-call.loop = "queue"                     # assignment works too
-
-# --- sound -------------------------------------------------------------------
-await call.set_volume(80)               # local gain, 0..200 (%)
-await call.set_volume(80, server_side=True)   # also phone.editGroupCallParticipant
-await call.mute()
-await call.unmute()
-
-# --- queue -------------------------------------------------------------------
-await call.shuffle()
-await call.clear_queue()
-
-# --- state -------------------------------------------------------------------
-call.is_connected · call.is_playing · call.is_paused
-call.position · call.duration · call.volume · call.loop_mode
-call.now_playing        # AyTrack: title, state, position, duration, progress bar…
-call.playback_state · call.ssrc · call.chat_id
-await call.get_stats()  # AyStats(packets_sent, bytes_sent, frames_encoded, ice_state, …)
-call.debug_snapshot()   # JSON string for bug reports (no secrets)
-
-# manual control is still there if you want it
-await call.join(chat_id) ; await call.leave()
-
-async with AyCall(user_client, chat_id) as call:   # leaves on exit
-    ...
-```
-
-### Automation you can turn off
-
-```python
-AyConfig(
-    auto_join=True,          # play() joins by itself
-    auto_leave=True,         # leave when the queue runs out
-    auto_leave_delay=3.0,    # grace period, so a quick next request keeps the call
-)
-```
-
-The grace period matters: if a user queues another song within `auto_leave_delay`, the
-pending leave is cancelled and the call stays up.
-
-Every control lives on `AyCall`, so a consumer only ever imports `aytgcalls`:
+For a single persistent voice chat:
 
 ```python
 from aytgcalls import AyCall
 
 call = AyCall(user_client, chat_id)
-await call.play("https://example.com/song.mp3")   # joins, plays; queues if busy
-await call.forward(30)
-await call.loop(2)
-print(call.now_playing)     # song.mp3 [playing] 00:47 / 03:52 ▬▬▬▬🔘▬▬▬▬▬▬▬▬▬▬▬
-# no leave() needed — the call exits when the queue is done
+await call.play("song.mp3")              # joins + plays
+await call.pause()
+await call.resume()
+await call.skip()
+await call.end()                         # stop + leave
 ```
 
-### Names
+## API reference
 
-The public names are all `Ay*`; the longer descriptive names still work.
+All methods are available on `AyClient`, `AyFac` (with `chat_id` first), and `AyCall`
+(without `chat_id`). The table shows the `AyClient` signature.
 
-| Import | Also available as |
-|---|---|
-| `AyCall` | `GroupCall` |
-| `AyFac` | `GroupCallFactory` |
-| `AyConfig` | `CallConfig` |
-| `AyCreds` | `TelegramCredentials` |
-| `AyLoop` | `LoopMode` |
-| `AyTrack` | `TrackInfo` |
-| `AySource` | `AudioSource` |
-| `AyState` | `PlaybackState` |
-| `AyStats` | `CallStats` |
-| `AyPlayer`, `AyQueue` | `Player`, `TrackQueue` |
-
-### Now playing
-
-`call.now_playing` returns a `TrackInfo` built for chat replies:
+### Playback
 
 ```python
-info = call.now_playing
-info.title                       # "song.mp3"
-info.state                       # PlaybackState.PLAYING
-info.position, info.duration     # 47.2, 232.0   (duration None => live)
-info.progress                    # 0.203  (None for live)
-info.queued, info.loop, info.volume
-info.is_live
-info.format_time(info.position)  # "00:47"
-info.progress_bar()              # "▬▬▬▬🔘▬▬▬▬▬▬▬▬▬▬▬"  ("🔴 LIVE" when live)
-str(info)                        # one-line summary
+await client.play(chat_id, source)              # join / play / queue, all automatic
+await client.play(chat_id, source, force=True)  # jump the queue
+await client.add(chat_id, source)               # alias for play()
+await client.pause(chat_id)
+await client.resume(chat_id)
+await client.stop_playback(chat_id)             # stop audio, stay in the call
+await client.stop(chat_id)                      # stop + leave  (same as end())
+await client.end(chat_id)
+await client.previous(chat_id)
+await client.replay(chat_id)
 ```
 
-### How seeking works
+`source` can be a local path, an `http(s)` URL, a Pyrogram `Message`, or an `AudioSource`.
 
-`position` counts frames that have actually been **sent**, not frames decoded — the reader
-runs up to `buffer_ms` ahead of the sender, so those two differ. Seeking picks a strategy
-per source:
+### Seeking
 
-| Source | Strategy | Notes |
-|---|---|---|
-| Local file | FFmpeg `-ss` | Fast and frame-accurate. |
-| URL, self-framing format (MP3, ADTS AAC, MPEG-TS) with `Accept-Ranges` | HTTP `Range` byte offset | Offset estimated from duration + length: exact for CBR, resyncs within a frame or two for VBR. No re-downloading. |
-| URL, header-dependent format (WAV, FLAC, OGG/Opus, M4A, WebM) | FFmpeg `-ss` on the piped stream | A byte slice would cut away the header the decoder needs, so correctness wins over speed: the stream is re-read from the start and discarded up to the seek point. |
-| Live stream (no discoverable duration) | not seekable | Raises `NotPlaying`. |
+```python
+await client.seek(chat_id, 90)        # absolute seconds → where we landed
+await client.forward(chat_id, 10)     # skip forward (default 10 s)
+await client.rewind(chat_id, 10)      # skip backward (default 10 s)
+```
 
-`duration` is discovered in the background via PyAV (which links its own FFmpeg libraries,
-so it works even where the `ffmpeg` binary cannot resolve DNS) and is `None` until known.
+### Queue
+
+```python
+await client.shuffle(chat_id)
+await client.clear_queue(chat_id)
+await client.loop(chat_id, "off")     # "off" | "track" | "queue" | "shuffle"
+await client.loop(chat_id, 3)         # repeat current track 3 more times
+await client.loop(chat_id)            # read current mode
+```
+
+### Volume
+
+```python
+await client.volume(chat_id, 80)      # local gain, 0..200 (%)
+await client.mute(chat_id)
+await client.unmute(chat_id)
+```
+
+### Video
+
+```python
+await client.play_video(chat_id, "clip.mp4")   # stream video
+await client.stop_video(chat_id)                # stop video, audio continues
+```
+
+### Introspection
+
+```python
+client.now_playing(chat_id)           # TrackInfo: title, state, position, duration …
+client.position(chat_id)              # current playback position (seconds)
+client.duration(chat_id)              # track duration (None for live)
+client.volume(chat_id)                # current volume setting
+client.playback_state(chat_id)        # PlaybackState: PLAYING | PAUSED | IDLE …
+client.is_connected(chat_id)          # whether we are in the voice chat
+client.get_call(chat_id)              # underlying GroupCall, or None
+await client.get_stats(chat_id)       # CallStats: packets, bytes, frames, ICE state …
+client.active_calls                   # dict of all joined calls
+len(client)                           # number of active calls
+```
+
+### Join / leave
+
+```python
+await client.join(chat_id)            # join without playing
+await client.leave(chat_id)           # leave this chat
+```
 
 ## Queue
 
 ```python
-from aytgcalls import LoopMode
+from aytgcalls import AyLoop
 
 await call.queue.add("a.mp3")
 await call.queue.add("b.mp3", position=0)
@@ -371,13 +350,12 @@ await call.loop("shuffle")          # shuffle + keep looping
 await call.loop("off")
 ```
 
-`loop()` accepts a count, a `LoopMode`, or any friendly word (`one`, `song`, `all`,
+Loop accepts a count, a `LoopMode`, or any friendly word (`one`, `song`, `all`,
 `playlist`, `repeat`, `shuffle`, `off`), so a chat command can be forwarded straight to it.
 After `loop(3)` plays the track three more times the mode falls back to `off` by itself.
 
 `play()` returns `(track, started_now)` so a bot can reply either "playing" or "queued at
-#3" without tracking state itself. When a track ends the next one starts on its own — no
-polling and no `on_stream_end` bookkeeping required.
+#3" without tracking state itself. When a track ends the next one starts on its own.
 
 Transitions are near-gapless: the next FFmpeg process starts the moment the previous one
 hits EOF, feeding the same ring buffer, so the 20 ms RTP cadence never breaks.
@@ -387,7 +365,7 @@ hits EOF, feeding the same ring buffer, so the 20 ms RTP cadence never breaks.
 ```python
 @call.on_stream_end
 async def _(call, source, reason):
-    # reason: COMPLETED | SKIPPED | STOPPED | ERROR
+    # reason: FINISHED | FAILED | STOPPED | TIMEOUT
     print("finished", source.display_name, reason.value)
 
 @call.on_disconnect
@@ -396,26 +374,21 @@ async def _(call, reason):
     print("disconnected", reason.value)
 ```
 
-## Multiple chats
+## Video / screen sharing
 
 ```python
-from aytgcalls import GroupCallFactory
-
-manager = GroupCallFactory(user_client)
-call = await manager.get_or_create(-1001234567890)
-await call.play("song.mp3")
-
-await manager.leave(-1001234567890)
-await manager.leave_all()
+await call.play_video("clip.mp4")       # stream a video file
+await call.stop_video()                 # stop video, audio continues
+await call.play("song.mp3")             # audio keeps going
 ```
 
-Each call gets its own transport and its own FFmpeg pipeline; the practical limit is CPU
-and bandwidth, not the protocol.
+The video track is encoded to H.264 by FFmpeg and sent on the dedicated presentation
+SSRC (`ssrc-groups`). Requires Telegram's presentation join path.
 
-## Bot command interface + assistant
+## Bot command interface
 
 See [`examples/bot_plus_assistant.py`](examples/bot_plus_assistant.py) for a complete
-command surface — the bot parses the commands and the user session does the streaming:
+command surface using `AyFac`:
 
 ```
 /play <file|url>   or reply to a voice/audio message      /now   /queue
@@ -430,9 +403,9 @@ There is no `/join` and no `/add` — `/play` covers both.
 ## Configuration
 
 ```python
-from aytgcalls import CallConfig
+from aytgcalls import AyConfig
 
-config = CallConfig(
+config = AyConfig(
     ffmpeg_path="ffmpeg",
     opus_bitrate=96_000,      # 64–128 kbps is Telegram's comfortable range
     buffer_ms=400,            # jitter buffer depth
@@ -444,7 +417,7 @@ config = CallConfig(
     auto_reconnect=True,
     reconnect_max_attempts=8,
 )
-call = GroupCall(client, config=config)
+call = AyCall(client, config=config)
 ```
 
 Everything is also readable from the environment:
@@ -465,6 +438,19 @@ Everything is also readable from the environment:
 from aytgcalls import enable_debug
 enable_debug()
 ```
+
+## Automation you can turn off
+
+```python
+AyConfig(
+    auto_join=True,          # play() joins by itself
+    auto_leave=True,         # leave when the queue runs out
+    auto_leave_delay=3.0,    # grace period, so a quick next request keeps the call
+)
+```
+
+The grace period matters: if a user queues another song within `auto_leave_delay`, the
+pending leave is cancelled and the call stays up.
 
 ## Error handling
 
@@ -492,8 +478,7 @@ AytgcallsError
 from aytgcalls.exceptions import AytgcallsError
 
 try:
-    await call.join(chat_id)
-    await call.play(source)
+    await client.play(chat_id, "song.mp3")
 except AytgcallsError as exc:
     await message.reply(f"❌ {exc}")
 ```
@@ -579,11 +564,11 @@ Implemented:
 * ICE (controlling) + DTLS-SRTP (client) + RTP with pinned SSRC and the SFU's payload type
 * FFmpeg → PCM → ring buffer → gain → Opus 20 ms → paced RTP
 * queue with loop/shuffle/history, near-gapless transitions, deterministic teardown
+* video / screen sharing via presentation SSRC (H.264, FFmpeg-encoded)
 
 Not implemented, deliberately:
 
 * **Receiving** other participants' audio (we publish only)
-* **Video / screen sharing** (`phone.joinGroupCallPresentation`, `ssrc-groups`)
 * **RTMP / stream-mode** calls (detected and rejected with a clear error)
 * **E2E conference calls** (`public_key` / `block` arguments of `phone.joinGroupCall`)
 
@@ -592,7 +577,7 @@ Not implemented, deliberately:
 ```bash
 git clone … && cd aytgcalls
 pip install -e ".[dev]"
-pytest -q          # 246 tests, no network required
+pytest -q          # ~250 tests, no network required
 ruff check .
 mypy aytgcalls
 ```

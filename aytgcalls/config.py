@@ -105,7 +105,7 @@ class CallConfig:
     #: Milliseconds of PCM to keep buffered ahead of the sender.
     buffer_ms: int = 400
     #: Milliseconds of PCM to accumulate before the first frame is released.
-    prefetch_ms: int = 200
+    prefetch_ms: int = 100
     #: Initial playback volume, in percent (100 == unity gain).
     volume: int = 100
     #: Fetch http(s) sources with aiohttp and pipe them into FFmpeg's stdin instead of

@@ -3,12 +3,19 @@
 Kurigram (MTProto) for signaling, aiortc (ICE/DTLS-SRTP/RTP) for media, FFmpeg for
 decoding. No py-tgcalls, no tgcalls, no Telethon.
 
-    from pyrogram import Client            # provided by kurigram
-    from aytgcalls import GroupCall
+    from aytgcalls import AyClient, AyCreds
 
-    call = GroupCall(user_client)
-    await call.join(chat_id)
-    await call.play("song.mp3")
+    call = AyClient(AyCreds.from_env())
+    await call.start()
+
+    # all controls take chat_id first
+    await call.play(-1001234567890, "song.mp3")
+    await call.pause(-1001234567890)
+    await call.resume(-1001234567890)
+    await call.seek(-1001234567890, 45)
+    await call.skip(-1001234567890)
+    await call.end(-1001234567890)
+    await call.stop()
 """
 
 from __future__ import annotations
@@ -58,7 +65,7 @@ from .types import (
     TrackInfo,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 def __getattr__(name: str) -> object:
@@ -76,6 +83,10 @@ def __getattr__(name: str) -> object:
         from .call.factory import GroupCallFactory  # noqa: PLC0415
 
         return GroupCallFactory
+    if name == "AyClient":
+        from .client import AyClient  # noqa: PLC0415
+
+        return AyClient
     if name in ("AyPlayer", "Player"):
         from .player.player import Player  # noqa: PLC0415
 
@@ -107,6 +118,7 @@ __all__ = [
     # --- descriptive aliases, all still valid ---
     "GroupCall",
     "GroupCallFactory",
+    "AyClient",
     "Player",
     "TrackQueue",
     # config

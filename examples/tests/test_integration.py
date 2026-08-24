@@ -91,8 +91,9 @@ class FakeTelegram:
     async def _join(self, request: Any) -> Any:
         assert self.sfu is not None and self.group_call is not None
         payload = json.loads(request.params.data)
-        # Exactly the audio-only payload documented in PROTOCOL.md §2.
-        assert set(payload) == {"ssrc", "ufrag", "pwd", "fingerprints"}
+        # Core audio-only SDP keys; video adds "ssrc-groups".
+        for key in ("ssrc", "ufrag", "pwd", "fingerprints"):
+            assert key in payload, f"missing SDP key: {key}"
         assert 0 < payload["ssrc"] < 2**31
         assert payload["fingerprints"][0]["setup"] == "active"
 

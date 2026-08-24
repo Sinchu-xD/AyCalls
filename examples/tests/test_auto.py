@@ -17,7 +17,7 @@ import pytest
 pyrogram = pytest.importorskip("pyrogram", reason="kurigram is not installed")
 raw = pyrogram.raw
 
-from aytgcalls import AyCall, AyConfig, AyFac, AyLoop  # noqa: E402
+from aytgcalls import AyCall, AyClient, AyConfig, AyFac, AyLoop  # noqa: E402
 from aytgcalls.exceptions import InvalidAudioSource, NotJoined  # noqa: E402
 from aytgcalls.media.telegram import (  # noqa: E402
     TelegramDownloader,
@@ -407,7 +407,7 @@ async def test_ayfac_play_is_a_one_liner(long_tone_wav: Path) -> None:
         assert await fac.loop(CHAT_ID, 2) is AyLoop.TIMES
         await fac.pause(CHAT_ID)
         await fac.resume(CHAT_ID)
-        await fac.volume(CHAT_ID, 70)
+        await fac.set_volume(CHAT_ID, 70)
         assert fac.now_playing(CHAT_ID).title.endswith("long.wav")
 
         assert await fac.stop(CHAT_ID) is True
@@ -426,6 +426,58 @@ async def test_ayfac_controls_reject_unknown_chats() -> None:
     with pytest.raises(KeyError):
         _ = fac[-100999]
     assert fac.now_playing(-100999) is None
+
+
+# --------------------------------------------------------------------------- AyClient
+
+
+async def test_ayclient_play_auto_joins_and_queues(long_tone_wav: Path, short_mp3: Path) -> None:
+    """AyClient.play() handles join, queue, and playback in one call."""
+    from aytgcalls import AyClient  # noqa: E402
+
+    sfu = FakeSfu()
+    await sfu.gather()
+    tg = FakeTelegram(sfu)
+    fac = AyFac(tg, config=_config(auto_leave=False))
+    client = AyClient(tg, config=_config(auto_leave=False))
+
+    # wire up the internal factory so the fake SFU can answer the join
+    client._factory = fac
+    call = fac.create(CHAT_ID)
+    tg.group_call = call
+
+    try:
+        # --- auto-join via play() ---
+        track, started = await client.play(CHAT_ID, str(long_tone_wav))
+        assert started is True
+        assert call.is_connected
+        assert call.player.current is not None
+
+        # --- auto-queue on second call ---
+        track2, started2 = await client.play(CHAT_ID, str(short_mp3))
+        assert started2 is False
+        assert len(call.queue) == 1
+
+        # --- controls work through AyClient ---
+        await client.pause(CHAT_ID)
+        await client.resume(CHAT_ID)
+        await client.seek(CHAT_ID, 5)
+        await client.skip(CHAT_ID)
+        assert call.player.current.uri == str(short_mp3)
+
+        # --- introspection ---
+        assert client.position(CHAT_ID) >= 0
+        assert client.playback_state(CHAT_ID) is not None
+        assert client.now_playing(CHAT_ID) is not None
+        assert client.is_connected(CHAT_ID) is True
+
+        # --- end tears down ---
+        await client.end(CHAT_ID)
+        assert not call.is_connected
+    finally:
+        await fac.leave_all()
+        await sfu.close()
+        await tg.cleanup()
 
 
 # --------------------------------------------------------------------------- SFU drop

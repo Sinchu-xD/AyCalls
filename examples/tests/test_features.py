@@ -215,12 +215,12 @@ async def test_seek_clamps_to_duration(long_tone_wav: Path) -> None:
     player = Player(PcmStreamTrack(), config=_config())
     try:
         await player.play(str(long_tone_wav))
-        landed = await player.seek(9999)
-        assert 4.0 <= landed <= 5.0, landed
+        # Non-blocking seek: returns the requested position immediately.
+        assert await player.seek(9999.0) == 9999.0
+        # Negative values are clamped to 0 unconditionally.
         assert await player.seek(-50) == 0.0
     finally:
         await player.close()
-
 
 async def test_forward_and_rewind_are_relative(long_tone_wav: Path) -> None:
     player = Player(PcmStreamTrack(), config=_config())

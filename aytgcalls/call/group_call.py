@@ -35,6 +35,7 @@ from ..telegram.signaling import GroupCallSignaling
 from ..telegram.updates import CallUpdateEvent, GroupCallUpdateRouter
 from ..transport.sdp import parse_join_response
 from ..transport.track import PcmStreamTrack
+from ..transport.video import H264StreamTrack
 from ..transport.webrtc import TelegramTransport
 from ..types import (
     AudioSource,
@@ -79,8 +80,10 @@ class GroupCall:
 
         self._signaling = GroupCallSignaling(client)
         self._track = PcmStreamTrack(stats=self.stats)
+        self._video_track = H264StreamTrack(stats=self.stats)
         self.player = Player(
             self._track,
+            video_track=self._video_track,
             config=self.config,
             queue=queue,
             on_stream_end=self._handle_stream_end,
@@ -133,6 +136,10 @@ class GroupCall:
     @property
     def ssrc(self) -> int | None:
         return self._transport.ssrc if self._transport else None
+
+    @property
+    def video_ssrc(self) -> int | None:
+        return self._transport.video_ssrc if self._transport else None
 
     @property
     def playback_state(self) -> PlaybackState:
@@ -216,6 +223,7 @@ class GroupCall:
             connect_timeout=self.config.connect_timeout,
             opus_bitrate=self.config.opus_bitrate,
             stats=self.stats,
+            video_track=self._video_track,
         )
         # Publish the transport before connecting so `call.ssrc` is meaningful during the
         # handshake and so teardown can always find it.
@@ -262,6 +270,8 @@ class GroupCall:
             if transport is not None:
                 await transport.close()
             self._track.stop()
+            if self._video_track is not None:
+                self._video_track.stop()
 
             if self._discovered is not None and source is not None and self._joined.is_set():
                 try:
@@ -324,6 +334,29 @@ class GroupCall:
     ) -> tuple[AudioSource, bool]:
         """Alias for :meth:`play` — kept so ``/add`` style commands keep working."""
         return await self.play(source, chat_id=chat_id, force=force)
+
+    async def play_video(
+        self,
+        source: Any,
+        *,
+        chat_id: int | str | None = None,
+    ) -> None:
+        """Start streaming a video into the group call.
+
+        The call must already be joined.  The video source is any local path or URL that
+        FFmpeg can read and contains H.264 (or that FFmpeg can re-encode to H.264).
+
+        :param source: path or URL to a video file.
+        :param chat_id: needed only if it was not given to the constructor.
+        """
+        if self._video_track is None:
+            raise NotJoined("No video track — construct GroupCall with a video-capable config.")
+        await self._ensure_joined(chat_id)
+        await self.player.play_video(source)
+
+    async def stop_video(self) -> None:
+        """Stop streaming video (the audio track continues uninterrupted)."""
+        await self.player.stop_video()
 
     async def _ensure_joined(self, chat_id: int | str | None = None) -> None:
         """Join the voice chat if needed, using the chat id we were given."""

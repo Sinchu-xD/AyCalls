@@ -12,12 +12,13 @@ runs out. Every per-call control is mirrored here with a ``chat_id`` first argum
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from typing import TYPE_CHECKING, Any
 
 from ..config import CallConfig
 from ..exceptions import NotJoined
 from ..logger import get_logger
-from ..types import AudioSource, LoopMode, TrackInfo
+from ..types import AudioSource, CallStats, LoopMode, PlaybackState, TrackInfo
 from .group_call import GroupCall
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -140,8 +141,11 @@ class GroupCallFactory:
     async def loop(self, chat_id: int | str, value: Any = None) -> LoopMode:
         return await self._require(chat_id).loop(value)
 
-    async def volume(self, chat_id: int | str, percent: float) -> None:
-        await self._require(chat_id).set_volume(percent)
+    async def set_volume(self, chat_id: int | str, percent: float) -> None:
+        """Set playback volume for ``chat_id``."""
+        call = self._calls.get(chat_id)
+        if call is not None:
+            await call.set_volume(percent)
 
     async def mute(self, chat_id: int | str) -> None:
         await self._require(chat_id).mute()
@@ -153,6 +157,31 @@ class GroupCallFactory:
         """Current :class:`TrackInfo` for ``chat_id``, or ``None`` if not in that chat."""
         call = self._calls.get(chat_id)
         return call.now_playing if call is not None else None
+
+    def position(self, chat_id: int | str) -> float:
+        """Playback position in seconds for ``chat_id`` (0 if not joined)."""
+        call = self._calls.get(chat_id)
+        return call.position if call is not None and call.is_connected else 0.0
+
+    def duration(self, chat_id: int | str) -> float | None:
+        """Track duration in seconds for ``chat_id``, or ``None``."""
+        call = self._calls.get(chat_id)
+        return call.duration if call is not None and call.is_connected else None
+
+    def volume(self, chat_id: int | str) -> float:
+        """Current volume (0–200) for ``chat_id`` (100 if not joined)."""
+        call = self._calls.get(chat_id)
+        return call.volume if call is not None and call.is_connected else 100.0
+
+    def playback_state(self, chat_id: int | str) -> PlaybackState:
+        """Current :class:`~aytgcalls.PlaybackState` for ``chat_id``."""
+        call = self._calls.get(chat_id)
+        return call.playback_state if call is not None and call.is_connected else PlaybackState.IDLE
+
+    async def get_stats(self, chat_id: int | str) -> CallStats | None:
+        """Live :class:`~aytgcalls.CallStats` for ``chat_id``, or ``None``."""
+        call = self._calls.get(chat_id)
+        return await call.get_stats() if call is not None and call.is_connected else None
 
     async def stop(self, chat_id: int | str) -> bool:
         """Stop playback and leave that chat. ``False`` if we were not there."""
@@ -173,6 +202,36 @@ class GroupCallFactory:
         if calls:
             await asyncio.gather(*(call.leave() for call in calls), return_exceptions=True)
         logger.info("Left %d call(s)", len(calls))
+
+    async def play_video(self, chat_id: int | str, source: Any) -> None:
+        """Start streaming video in ``chat_id``."""
+        await self._require(chat_id).play_video(source)
+
+    async def stop_video(self, chat_id: int | str) -> None:
+        """Stop video in ``chat_id`` (audio continues)."""
+        await self._require(chat_id).stop_video()
+
+    async def stop_playback(self, chat_id: int | str) -> None:
+        """Stop audio in ``chat_id`` but stay in the call."""
+        await self._require(chat_id).stop_playback()
+
+    async def shuffle(self, chat_id: int | str) -> None:
+        """Shuffle the pending queue in ``chat_id``."""
+        await self._require(chat_id).shuffle()
+
+    async def clear_queue(self, chat_id: int | str) -> int:
+        """Drop all pending tracks for ``chat_id``. Returns how many were removed."""
+        call = self._calls.get(chat_id)
+        return await call.clear_queue() if call is not None else 0
+
+    async def end(self, chat_id: int | str) -> bool:
+        """Stop playback, clear queue and fully tear down ``chat_id``."""
+        call = self._calls.pop(chat_id, None)
+        if call is None:
+            return False
+        with contextlib.suppress(Exception):
+            await call.end()
+        return True
 
     async def __aenter__(self) -> GroupCallFactory:
         return self

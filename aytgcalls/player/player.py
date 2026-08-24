@@ -36,13 +36,17 @@ from ..media.buffer import PcmRingBuffer
 from ..media.ffmpeg import FFmpegProcess
 from ..media.metadata import MediaInfo, probe_media_info
 from ..media.source import validate_source
+from ..media.video_ffmpeg import FFmpegVideoProcess
 from ..media.volume import apply_gain, percent_to_gain
+from ..media.youtube import is_ytdlp_url, resolve_url
 from ..transport.track import PcmStreamTrack
+from ..transport.video import H264StreamTrack
 from ..types import (
     BYTES_PER_FRAME,
     FRAME_MS,
     AudioSource,
     PlaybackState,
+    SourceKind,
     StreamEndReason,
     TrackInfo,
 )
@@ -59,7 +63,11 @@ _FRAME_SECONDS = FRAME_MS / 1000.0
 
 
 class Player:
-    """Drives audio from a queue of sources into a :class:`PcmStreamTrack`."""
+    """Drives audio from a queue of sources into a :class:`PcmStreamTrack`.
+
+    Optionally manages a parallel video track: pass ``video_track`` and call
+    :meth:`play_video` to start streaming H.264 alongside the audio.
+    """
 
     def __init__(
         self,
@@ -68,12 +76,14 @@ class Player:
         config: CallConfig | None = None,
         queue: TrackQueue | None = None,
         on_stream_end: StreamEndCallback | None = None,
+        video_track: H264StreamTrack | None = None,
     ) -> None:
         self.config = config or CallConfig()
         self.track = track
         self.queue = queue or TrackQueue()
         self.state = StateMachine()
         self.on_stream_end = on_stream_end
+        self._video_track = video_track
 
         self._buffer = PcmRingBuffer(
             capacity_ms=self.config.buffer_ms,
@@ -97,6 +107,11 @@ class Player:
         self._info: dict[str, MediaInfo] = {}
         self._info_tasks: dict[str, asyncio.Task[MediaInfo]] = {}
         self._closed = False
+
+        # Video pipeline state
+        self._video_process: FFmpegVideoProcess | None = None
+        self._video_reader_task: asyncio.Task[None] | None = None
+        self._video_source: AudioSource | None = None
 
         self.track.set_provider(self._provide_frame)
 
@@ -208,6 +223,14 @@ class Player:
                 raise AytgcallsError("Player is closed")
             if source is not None:
                 track = validate_source(source)
+                if (
+                    track.kind is SourceKind.URL
+                    and is_ytdlp_url(track.uri)
+                ):
+                    resolved = await resolve_url(track.uri)
+                    if resolved is not None:
+                        track = resolved
+                        logger.info("Resolved via yt-dlp: %s", track.display_name)
                 if not replace and self.state.is_active:
                     await self.queue.add(track)
                     logger.info("Queued %s", track.display_name)
@@ -218,6 +241,13 @@ class Player:
 
             current = self.queue.current
             assert current is not None
+
+            # When replacing an active source, stop the old reader and drain the
+            # buffer so stale audio from the previous track never leaks through.
+            if self.state.is_active and source is not None:
+                await self._stop_reader()
+                self._reset_stream_state()
+
             await self._restart_from(current)
             logger.info("Playing %s", current.display_name)
             return current
@@ -268,10 +298,11 @@ class Player:
             return earlier
 
     async def stop(self, *, clear_queue: bool = True) -> None:
-        """Stop playback, kill FFmpeg, drop buffered audio."""
+        """Stop playback, kill FFmpeg, drop buffered audio and video."""
         async with self._lock:
             finished = self.current
             await self._stop_reader()
+            await self._stop_video()
             self._reset_stream_state()
             if clear_queue:
                 await self.queue.reset()
@@ -303,12 +334,18 @@ class Player:
             if source is None or not self.state.is_active:
                 raise NotPlaying("Nothing is playing, so there is nothing to seek")
 
-            info = await self._ensure_info(source)
+            info = self._info.get(source.id, MediaInfo())
+
+            # Start a background probe so subsequent seeks benefit. Never block playback.
+            self._probe_in_background(source)
+
+            # If we already know this is a live stream (no duration), refuse to seek.
             if info.duration is None and source.kind.value == "url":
                 raise NotPlaying(
                     f"{source.display_name!r} is a live stream with no known duration; "
                     "seeking is not possible."
                 )
+
             target = max(0.0, float(position))
             if info.duration is not None:
                 # Leave a moment at the end so a seek does not land past EOF.
@@ -356,9 +393,70 @@ class Player:
         self._closed = True
         async with self._lock:
             await self._stop_reader()
+            await self._stop_video()
             self._buffer.close()
             self.track.set_provider(None)
         logger.debug("Player closed")
+
+    # -- video ---------------------------------------------------------------------------
+
+    @property
+    def video_track(self) -> H264StreamTrack | None:
+        return self._video_track
+
+    @property
+    def is_playing_video(self) -> bool:
+        return self._video_process is not None and self._video_process.is_running
+
+    async def play_video(self, source: Any, *, replace: bool = True) -> AudioSource:
+        """Start (or replace) video playback.
+
+        ``source`` is classified the same way as :meth:`play`.  The audio track
+        is unaffected; this method only starts the H.264 decode pipeline.
+        """
+        if self._video_track is None:
+            raise AytgcallsError("No video track — create Player with video_track=...")
+        async with self._lock:
+            track = validate_source(source)
+            if not replace and self.is_playing_video:
+                raise AytgcallsError("Video already playing; pass replace=True to switch")
+            await self._stop_video()
+            self._video_source = track
+            binary = self.config.resolve_ffmpeg()
+            process = FFmpegVideoProcess(
+                track,
+                binary=binary,
+                http_fetch=self.config.fetch_urls_with_python,
+                http_headers=self.config.http_headers,
+            )
+            self._video_process = process
+            await process.start()
+            self._video_track.set_provider(self._video_nalu_provider)
+            logger.info("Playing video: %s", track.display_name)
+            return track
+
+    async def stop_video(self) -> None:
+        """Stop video playback without touching the audio track."""
+        async with self._lock:
+            await self._stop_video()
+
+    async def _stop_video(self) -> None:
+        task, self._video_reader_task = self._video_reader_task, None
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        process, self._video_process = self._video_process, None
+        if process is not None:
+            await process.stop()
+        if self._video_track is not None:
+            self._video_track.set_provider(None)
+        self._video_source = None
+
+    async def _video_nalu_provider(self) -> bytes | None:
+        if self._video_process is None:
+            return None
+        return await self._video_process.read_nalu()
 
     # -- reader task ---------------------------------------------------------------------------
 
