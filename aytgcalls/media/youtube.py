@@ -95,19 +95,21 @@ async def resolve_url(url: str) -> AudioSource | None:
         ) from exc
 
     if not direct_url:
+        logger.error("YouTubeMusic returned no stream URL for %r — cannot fall back to original URL (may be an HLS manifest)", url)
         raise MediaSourceError(
             f"YouTubeMusic returned no stream URL for {url!r}. "
-            "The video may be geo-restricted or unavailable."
+            "The track may be geo-restricted, age-restricted, or unavailable."
         )
 
     # Reject HLS/DASH manifests as a safety net
     parsed = urlparse(direct_url)
     if parsed.path.endswith((".m3u8", ".mpd")):
+        logger.error("YouTubeMusic returned an HLS/DASH manifest for %r: %s — rejecting", url, parsed.path)
         raise MediaSourceError(
             f"Resolved URL is an HLS/DASH manifest, not a direct audio stream: {direct_url}"
         )
 
-    logger.debug("Resolved %r -> direct audio URL", url)
+    logger.info("Resolved %r -> direct videoplayback URL (%s)", url, parsed.hostname)
 
     return AudioSource(
         uri=direct_url,
