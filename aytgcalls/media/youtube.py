@@ -43,6 +43,7 @@ _YTDLP_DOMAINS: frozenset[str] = frozenset(
 )
 
 #: Minimal audio formats yt-dlp should prefer (opus, mp3, aac, m4a).
+#: Formats ending in + are disallowed as they return HLS/DASH manifests instead of direct URLs.
 _AUDIO_FORMATS = [
     "251",  # webm opus 160k (YouTube)
     "250",  # webm opus 70k
@@ -52,7 +53,7 @@ _AUDIO_FORMATS = [
     "171",  # webm opus vorbis
     "160",  # mp4a 128k
     "18",   # mp4a 128k (legacy)
-    "bestaudio",
+    "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio",
 ]
 
 def _ytdlp_cookie_path() -> str | None:
@@ -87,7 +88,9 @@ def _extract_direct_url(raw_url: str, cookies_from: str | None) -> tuple[str, st
         "--no-playlist",
         "--no-warnings",
         "--no-check-certificates",
+        "--force-ipv4",
         "-f", "/".join(_AUDIO_FORMATS),
+        "--format-sort", "ext",
         raw_url,
     ]
     if cookies_from and os.path.exists(cookies_from) and os.path.getsize(cookies_from) > 0:
@@ -143,12 +146,59 @@ def _extract_direct_url(raw_url: str, cookies_from: str | None) -> tuple[str, st
         or best.get("webpage_url")
         or raw_url
     )
+
+    # Reject HLS/DASH manifest URLs — they can't be fed directly to FFmpeg
+    parsed = urlparse(direct_url)
+    if parsed.path.endswith((".m3u8", ".mpd")):
+        # Try again with stricter format selection that avoids HLS/DASH
+        return _extract_direct_url_strict(raw_url, cookies_from)
+
     title = best.get("title") or best.get("description", "")[:60] or None
     duration = best.get("duration")
     return direct_url, title, duration
 
 
-async def resolve_url(url: str) -> AudioSource | None:
+def _extract_direct_url_strict(
+    raw_url: str, cookies_from: str | None
+) -> tuple[str, str, float | None]:
+    """Fallback: force a direct audio URL, never HLS/DASH."""
+    args = [
+        "yt-dlp",
+        "--dump-json",
+        "--no-playlist",
+        "--no-warnings",
+        "--no-check-certificates",
+        "--force-ipv4",
+        "--extract-audio",
+        "--audio-format", "best",
+        "--audio-quality", "0",
+        raw_url,
+    ]
+    if cookies_from and os.path.exists(cookies_from) and os.path.getsize(cookies_from) > 0:
+        args.extend(["--cookies", cookies_from])
+    proc = subprocess.run(args, capture_output=True, text=True, timeout=30, check=False)
+    if proc.returncode != 0:
+        raise MediaSourceError(
+            f"yt-dlp strict fallback failed for {raw_url!r}: {proc.stderr.strip()}"
+        )
+    lines = [l.strip() for l in proc.stdout.strip().splitlines() if l.strip()]
+    best_strict = None
+    for line in lines:
+        try:
+            info = json.loads(line)
+            if best_strict is None or info.get("abr") or info.get("vbr"):
+                best_strict = info
+        except json.JSONDecodeError:
+            continue
+    if best_strict is None:
+        raise MediaSourceError(f"yt-dlp strict fallback returned no data for {raw_url!r}.")
+    url = best_strict.get("url") or best_strict.get("webpage_url") or raw_url
+    title = best_strict.get("title") or best_strict.get("description", "")[:60] or None
+    duration = best_strict.get("duration")
+    return url, title, duration
+
+
+def resolve_url(url: str) -> AudioSource | None:
     """Resolve a yt-dlp URL to a direct playable source.
 
     Returns an :class:`AudioSource` with the direct URL, or ``None`` if yt-dlp
