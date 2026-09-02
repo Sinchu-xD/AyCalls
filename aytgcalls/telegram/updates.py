@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from ..logger import get_logger
 from .client import import_pyrogram
 
-if TYPE_CHECKING:  # pragma: no cover
+if TYPE_CHECKING:
     from pyrogram import Client
 
 logger = get_logger("telegram.updates")
@@ -35,7 +35,7 @@ class CallUpdateEvent:
         self.raw = raw
         self.extra = extra
 
-    def __repr__(self) -> str:  # pragma: no cover - cosmetic
+    def __repr__(self) -> str:
         return f"<CallUpdateEvent {self.kind} call_id={self.call_id} {self.extra}>"
 
 
@@ -99,7 +99,7 @@ class GroupCallUpdateRouter:
             return
         try:
             self._client.remove_handler(self._handler, group=-1)
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             logger.debug("Removing raw update handler failed: %s", exc)
         self._registered = False
         self._instances.pop(id(self._client), None)

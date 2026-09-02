@@ -33,9 +33,9 @@ from .call.group_call import GroupCall
 from .config import CallConfig, TelegramCredentials
 from .exceptions import NotJoined
 from .logger import get_logger
-from .telegram.client import build_user_client, import_pyrogram
+from .telegram.client import build_user_client
 
-if TYPE_CHECKING:  # pragma: no cover
+if TYPE_CHECKING:
     from pyrogram import Client
 
 __all__ = ["AyClient"]
@@ -258,7 +258,7 @@ class AyClient:
         """Track duration in seconds for ``chat_id``, or ``None``."""
         return self._require_factory().duration(chat_id)
 
-    def volume(self, chat_id: int | str) -> float:
+    def get_volume(self, chat_id: int | str) -> float:
         """Current volume (0–200) for ``chat_id`` (100 if not joined)."""
         return self._require_factory().volume(chat_id)
 
@@ -291,6 +291,6 @@ class AyClient:
     def __len__(self) -> int:
         return len(self.active_calls)
 
-    def __repr__(self) -> str:  # pragma: no cover - cosmetic
+    def __repr__(self) -> str:
         n = len(self.active_calls)
         return f"<AyClient calls={n}>"

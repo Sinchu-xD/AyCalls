@@ -13,7 +13,7 @@ from ..config import TelegramCredentials
 from ..exceptions import AytgcallsError, BotClientNotAllowed
 from ..logger import get_logger
 
-if TYPE_CHECKING:  # pragma: no cover
+if TYPE_CHECKING:
     from pyrogram import Client
 
 logger = get_logger("telegram.client")
@@ -36,12 +36,12 @@ _CONFLICT_HINT = (
 def import_pyrogram() -> Any:
     """Import kurigram (as ``pyrogram``) with a helpful error if it is missing/conflicting."""
     try:
-        import pyrogram  # noqa: PLC0415
-    except ImportError as exc:  # pragma: no cover - environment dependent
+        import pyrogram
+    except ImportError as exc:
         raise AytgcallsError(
             "kurigram is not installed. " + _CONFLICT_HINT
         ) from exc
-    if not hasattr(pyrogram, "Client"):  # pragma: no cover - defensive
+    if not hasattr(pyrogram, "Client"):
         raise AytgcallsError("The installed `pyrogram` module looks broken. " + _CONFLICT_HINT)
     return pyrogram
 

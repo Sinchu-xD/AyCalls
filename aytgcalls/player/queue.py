@@ -66,7 +66,7 @@ class TrackQueue:
     def __bool__(self) -> bool:
         return bool(self._items) or self._current is not None
 
-    def __repr__(self) -> str:  # pragma: no cover - cosmetic
+    def __repr__(self) -> str:
         return (
             f"<TrackQueue current={self._current} pending={len(self._items)} "
             f"loop={self.loop.value}>"

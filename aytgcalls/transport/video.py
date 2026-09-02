@@ -8,7 +8,6 @@ aiortc's :class:`RTCRtpSender` then re-encodes into H.264 RTP packets.
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 from collections.abc import Awaitable, Callable
 from fractions import Fraction
@@ -19,8 +18,8 @@ from aiortc.mediastreams import MediaStreamError, MediaStreamTrack
 from ..logger import get_logger
 from ..types import CallStats
 
-if TYPE_CHECKING:  # pragma: no cover
-    from av import VideoFrame, CodecContext
+if TYPE_CHECKING:
+    from av import CodecContext, VideoFrame
 
 logger = get_logger("transport.video")
 
@@ -100,7 +99,7 @@ class H264StreamTrack(MediaStreamTrack):
         if self._codec_ctx is not None:
             return
         try:
-            import av  # noqa: PLC0415
+            import av
             self._codec_ctx = av.CodecContext.create("h264", "r")
         except Exception as exc:
             raise RuntimeError(f"Cannot create H.264 decoder: {exc}") from exc
@@ -163,7 +162,7 @@ class H264StreamTrack(MediaStreamTrack):
         return frames[0]
 
     def _black_frame(self) -> "VideoFrame":
-        from av import VideoFrame  # noqa: PLC0415
+        from av import VideoFrame
 
         frame = VideoFrame(width=self._width, height=self._height, format="yuv420p")
         frame.pts = self._pts

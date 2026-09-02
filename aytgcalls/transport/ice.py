@@ -27,7 +27,7 @@ from aiortc.rtcicetransport import (
 from ..logger import get_logger
 from .sdp import IceCandidate
 
-if TYPE_CHECKING:  # pragma: no cover
+if TYPE_CHECKING:
     from collections.abc import Iterable
 
 logger = get_logger("transport.ice")

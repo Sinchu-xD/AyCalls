@@ -21,10 +21,10 @@ MAX_VOLUME_PERCENT = 200
 _INT16_MIN = -32768
 _INT16_MAX = 32767
 
-try:  # pragma: no cover - import-time branch
+try:
     import numpy as _np
-except ImportError:  # pragma: no cover
-    _np = None  # type: ignore[assignment]
+except ImportError:
+    _np = None
 
 
 def percent_to_gain(percent: float) -> float:
@@ -53,7 +53,7 @@ def apply_gain(pcm: bytes, gain: float) -> bytes:
 
     samples = array.array("h")
     samples.frombytes(pcm)
-    if sys.byteorder == "big":  # pragma: no cover - rare
+    if sys.byteorder == "big":
         samples.byteswap()
     for index, value in enumerate(samples):
         scaled = int(value * gain)
@@ -62,7 +62,7 @@ def apply_gain(pcm: bytes, gain: float) -> bytes:
         elif scaled < _INT16_MIN:
             scaled = _INT16_MIN
         samples[index] = scaled
-    if sys.byteorder == "big":  # pragma: no cover - rare
+    if sys.byteorder == "big":
         samples.byteswap()
     return samples.tobytes()
 

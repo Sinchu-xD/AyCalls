@@ -51,7 +51,7 @@ def enable_debug(*, level: int = logging.DEBUG, stream: Any = None) -> logging.L
         handler.setFormatter(
             logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
         )
-        handler._aytgcalls = True  # type: ignore[attr-defined]
+        handler._aytgcalls = True
         logger.addHandler(handler)
     return logger
 
@@ -95,5 +95,5 @@ def dump_signaling(logger: logging.Logger, label: str, payload: Any) -> None:
     logger.debug("%s: %s", label, json.dumps(redact(payload), indent=2, sort_keys=True))
 
 
-if os.environ.get("AYTGCALLS_DEBUG", "").lower() in {"1", "true", "yes", "on"}:  # pragma: no cover
+if os.environ.get("AYTGCALLS_DEBUG", "").lower() in {"1", "true", "yes", "on"}:
     enable_debug()

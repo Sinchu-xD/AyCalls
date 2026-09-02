@@ -65,7 +65,7 @@ from .types import (
     TrackInfo,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.5.0"
 
 
 def __getattr__(name: str) -> object:
@@ -76,23 +76,23 @@ def __getattr__(name: str) -> object:
     an MTProto stack installed.
     """
     if name in ("AyCall", "GroupCall"):
-        from .call.group_call import GroupCall  # noqa: PLC0415
+        from .call.group_call import GroupCall
 
         return GroupCall
     if name in ("AyFac", "GroupCallFactory"):
-        from .call.factory import GroupCallFactory  # noqa: PLC0415
+        from .call.factory import GroupCallFactory
 
         return GroupCallFactory
     if name == "AyClient":
-        from .client import AyClient  # noqa: PLC0415
+        from .client import AyClient
 
         return AyClient
     if name in ("AyPlayer", "Player"):
-        from .player.player import Player  # noqa: PLC0415
+        from .player.player import Player
 
         return Player
     if name in ("AyQueue", "TrackQueue"):
-        from .player.queue import TrackQueue  # noqa: PLC0415
+        from .player.queue import TrackQueue
 
         return TrackQueue
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

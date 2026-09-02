@@ -17,7 +17,7 @@ from ..exceptions import FFmpegError, MediaSourceError
 from ..logger import get_logger
 from ..types import BYTES_PER_FRAME, CHANNELS, SAMPLE_RATE, AudioSource, SourceKind
 
-if TYPE_CHECKING:  # pragma: no cover
+if TYPE_CHECKING:
     pass
 
 logger = get_logger("media.ffmpeg")
@@ -118,14 +118,14 @@ class FFmpegProcess:
                 stderr=asyncio.subprocess.PIPE,
             )
         except FileNotFoundError as exc:
-            from ..exceptions import FFmpegNotInstalled  # noqa: PLC0415
+            from ..exceptions import FFmpegNotInstalled
 
             raise FFmpegNotInstalled(self.binary) from exc
         except OSError as exc:
             raise FFmpegError(f"Could not start ffmpeg: {exc}") from exc
         self._stderr_task = asyncio.ensure_future(self._drain_stderr())
         if self.http_fetch:
-            from .http import HttpStreamReader  # noqa: PLC0415
+            from .http import HttpStreamReader
 
             self._reader = HttpStreamReader(
                 self.source.uri,
@@ -147,7 +147,7 @@ class FFmpegProcess:
                     logger.debug("ffmpeg[%s]: %s", self.source.display_name, text)
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             logger.debug("stderr drain ended: %s", exc)
 
     async def _pump_stdin(self) -> None:

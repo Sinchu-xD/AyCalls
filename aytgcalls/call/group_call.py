@@ -48,7 +48,7 @@ from ..types import (
 )
 from .reconnect import BackoffPolicy, ReconnectManager
 
-if TYPE_CHECKING:  # pragma: no cover
+if TYPE_CHECKING:
     from pyrogram import Client
 
 logger = get_logger("call")
@@ -145,7 +145,7 @@ class GroupCall:
     def playback_state(self) -> PlaybackState:
         return self.player.playback_state
 
-    def __repr__(self) -> str:  # pragma: no cover - cosmetic
+    def __repr__(self) -> str:
         return (
             f"<GroupCall chat={self._chat_id} connected={self.is_connected} "
             f"state={self.playback_state.value}>"

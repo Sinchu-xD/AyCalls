@@ -13,7 +13,7 @@ from ..exceptions import GroupCallNotFound, NotInGroup, TelegramCallError
 from ..logger import get_logger
 from .client import import_pyrogram
 
-if TYPE_CHECKING:  # pragma: no cover
+if TYPE_CHECKING:
     from pyrogram import Client
 
 logger = get_logger("telegram.discovery")
@@ -33,7 +33,7 @@ class DiscoveredCall:
     is_rtmp: bool = False
     title: str | None = None
 
-    def __str__(self) -> str:  # pragma: no cover - cosmetic
+    def __str__(self) -> str:
         return f"<GroupCall chat={self.chat_id} participants={self.participants_count}>"
 
 
@@ -96,7 +96,7 @@ async def discover_group_call(client: Client, chat_id: int | str) -> DiscoveredC
         discovered.is_scheduled = getattr(call, "schedule_date", None) is not None
         discovered.is_rtmp = bool(getattr(call, "rtmp_stream", False))
         discovered.title = getattr(call, "title", None)
-    except errors.RPCError as exc:  # pragma: no cover - network dependent
+    except errors.RPCError as exc:
         logger.debug("phone.getGroupCall enrichment failed (non-fatal): %s", exc)
 
     if discovered.is_scheduled:

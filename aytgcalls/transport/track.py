@@ -22,7 +22,7 @@ from aiortc.mediastreams import MediaStreamError, MediaStreamTrack
 from ..logger import get_logger
 from ..types import BYTES_PER_FRAME, CHANNELS, FRAME_MS, SAMPLE_RATE, SAMPLES_PER_FRAME, CallStats
 
-if TYPE_CHECKING:  # pragma: no cover
+if TYPE_CHECKING:
     from av import AudioFrame
 
 logger = get_logger("transport.track")
@@ -127,7 +127,7 @@ class PcmStreamTrack(MediaStreamTrack):
         return self._build_frame(payload)
 
     def _build_frame(self, payload: bytes) -> AudioFrame:
-        from av import AudioFrame  # local import: av is heavy  # noqa: PLC0415
+        from av import AudioFrame  # local import: av is heavy
 
         frame = AudioFrame(format="s16", layout="stereo", samples=self._samples)
         frame.planes[0].update(payload)

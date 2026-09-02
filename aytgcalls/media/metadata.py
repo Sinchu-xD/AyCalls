@@ -101,7 +101,7 @@ def _probe_container(target: str, timeout: float) -> tuple[float | None, str | N
     ``ffmpeg`` binary cannot resolve DNS.
     """
     try:
-        import av  # noqa: PLC0415
+        import av
 
         with av.open(target, timeout=timeout) as container:
             name = getattr(container.format, "name", None)
@@ -120,7 +120,7 @@ def _probe_container(target: str, timeout: float) -> tuple[float | None, str | N
 async def _probe_http(url: str, timeout: float) -> tuple[int | None, bool]:
     """Return ``(content_length, accepts_ranges)`` using a HEAD, falling back to a 1-byte GET."""
     try:
-        import aiohttp  # noqa: PLC0415
+        import aiohttp
 
         client_timeout = aiohttp.ClientTimeout(total=timeout)
         async with aiohttp.ClientSession(timeout=client_timeout) as session:

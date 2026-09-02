@@ -59,7 +59,7 @@ class HttpStreamReader:
     # -- lifecycle ---------------------------------------------------------------------
 
     async def _ensure_session(self) -> object:
-        import aiohttp  # noqa: PLC0415
+        import aiohttp
 
         if self._session is None:
             timeout = aiohttp.ClientTimeout(
@@ -74,8 +74,8 @@ class HttpStreamReader:
         self._session = None
         if session is not None:
             try:
-                await session.close()  # type: ignore[attr-defined]
-            except Exception as exc:  # pragma: no cover - defensive
+                await session.close()
+            except Exception as exc:
                 logger.debug("closing HTTP session failed: %s", exc)
 
     # -- streaming ---------------------------------------------------------------------
@@ -86,7 +86,7 @@ class HttpStreamReader:
         Live radio streams (no ``Content-Length``, endless body) simply never finish,
         which is exactly what we want.
         """
-        import aiohttp  # noqa: PLC0415
+        import aiohttp
 
         attempt = 0
         while not self._closed:
@@ -96,7 +96,7 @@ class HttpStreamReader:
                 headers["Range"] = f"bytes={self.bytes_read}-"
             session = await self._ensure_session()
             try:
-                async with session.get(  # type: ignore[attr-defined]
+                async with session.get(
                     self.url, headers=headers, allow_redirects=True
                 ) as response:
                     if response.status >= 400:
@@ -145,7 +145,7 @@ class HttpStreamReader:
     @staticmethod
     async def _discard(response: object, count: int) -> None:
         remaining = count
-        content = response.content  # type: ignore[attr-defined]
+        content = response.content
         while remaining > 0:
             chunk = await content.read(min(remaining, 64 * 1024))
             if not chunk:

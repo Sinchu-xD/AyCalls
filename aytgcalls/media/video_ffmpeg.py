@@ -9,14 +9,13 @@ from __future__ import annotations
 import asyncio
 import collections
 import contextlib
-import logging
 import shlex
 from typing import TYPE_CHECKING
 
 from ..logger import get_logger
 from ..types import AudioSource, SourceKind
 
-if TYPE_CHECKING:  # pragma: no cover
+if TYPE_CHECKING:
     pass
 
 logger = get_logger("media.video_ffmpeg")
@@ -137,13 +136,13 @@ class FFmpegVideoProcess:
                 stderr=asyncio.subprocess.PIPE,
             )
         except FileNotFoundError as exc:
-            from ..exceptions import FFmpegNotInstalled  # noqa: PLC0415
+            from ..exceptions import FFmpegNotInstalled
             raise FFmpegNotInstalled(self.binary) from exc
         except OSError as exc:
             raise RuntimeError(f"Could not start ffmpeg: {exc}") from exc
         self._stderr_task = asyncio.ensure_future(self._drain_stderr())
         if self.http_fetch:
-            from .http import HttpStreamReader  # noqa: PLC0415
+            from .http import HttpStreamReader
             self._reader = HttpStreamReader(self.source.uri, headers=self.http_headers)
             self._pump_task = asyncio.ensure_future(self._pump_stdin())
 
@@ -159,14 +158,14 @@ class FFmpegVideoProcess:
                     self._stderr.append(text)
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             logger.debug("stderr drain ended: %s", exc)
 
     async def _pump_stdin(self) -> None:
         assert self._process is not None and self._process.stdin is not None
         stdin = self._process.stdin
         try:
-            async for chunk in self._reader.iter_chunks():  # type: ignore[union-attr]
+            async for chunk in self._reader.iter_chunks():
                 stdin.write(chunk)
                 await stdin.drain()
         except asyncio.CancelledError:
@@ -246,7 +245,7 @@ class FFmpegVideoProcess:
                 await self._pump_task
             self._pump_task = None
         if self._reader is not None:
-            await self._reader.close()  # type: ignore[attr-defined]
+            await self._reader.close()
             self._reader = None
         if self._stderr_task is not None:
             self._stderr_task.cancel()

@@ -21,7 +21,7 @@ from ..logger import get_logger
 from ..types import AudioSource, CallStats, LoopMode, PlaybackState, TrackInfo
 from .group_call import GroupCall
 
-if TYPE_CHECKING:  # pragma: no cover
+if TYPE_CHECKING:
     from pyrogram import Client
 
 logger = get_logger("call.factory")

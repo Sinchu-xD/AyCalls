@@ -75,7 +75,7 @@ async def probe_source(
 
     :raises MediaSourceError: FFmpeg produced no audio.
     """
-    from .ffmpeg import FFmpegProcess  # noqa: PLC0415  (circular at import time)
+    from .ffmpeg import FFmpegProcess
 
     process = FFmpegProcess(
         source, binary=binary, http_fetch=http_fetch, http_headers=http_headers

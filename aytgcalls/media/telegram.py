@@ -21,7 +21,7 @@ from ..exceptions import InvalidAudioSource, MediaSourceError
 from ..logger import get_logger
 from ..types import AudioSource, SourceKind
 
-if TYPE_CHECKING:  # pragma: no cover
+if TYPE_CHECKING:
     from pyrogram import Client
 
 logger = get_logger("media.telegram")
@@ -157,7 +157,7 @@ class TelegramDownloader:
             try:
                 os.remove(path)
                 logger.debug("Removed temp download %s", path)
-            except OSError as exc:  # pragma: no cover - defensive
+            except OSError as exc:
                 logger.debug("Could not remove %s: %s", path, exc)
 
     def owns(self, source: AudioSource) -> bool:
@@ -169,7 +169,7 @@ class TelegramDownloader:
             if os.path.exists(path):
                 try:
                     os.remove(path)
-                except OSError:  # pragma: no cover - defensive
+                except OSError:
                     pass
         self._files.clear()
         if self._owns_root and self._root and os.path.isdir(self._root):

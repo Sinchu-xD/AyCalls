@@ -26,7 +26,7 @@ m-line (mid=1). The audio and video SSRCs are linked in the join payload via an
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiortc.rtcdtlstransport import RTCCertificate, RTCDtlsParameters, RTCDtlsTransport
 from aiortc.rtcdtlstransport import RTCDtlsFingerprint as AiortcFingerprint
@@ -52,6 +52,9 @@ from .ice import (
 )
 from .sdp import Fingerprint, JoinPayload, JoinResponse
 from .track import PcmStreamTrack
+
+if TYPE_CHECKING:
+    from .video import H264StreamTrack
 
 logger = get_logger("transport.webrtc")
 
@@ -374,7 +377,7 @@ class TelegramTransport:
                     try:
                         codec_ctx.bit_rate = self._opus_bitrate
                         logger.debug("Opus bitrate set to %d bps", self._opus_bitrate)
-                    except Exception as exc:  # pragma: no cover - PyAV version dependent
+                    except Exception as exc:
                         logger.debug("Could not set Opus bitrate: %s", exc)
                     return
                 await asyncio.sleep(0.05)
@@ -394,7 +397,7 @@ class TelegramTransport:
                         if getattr(entry, "type", "") == "outbound-rtp":
                             self._stats.packets_sent = int(getattr(entry, "packetsSent", 0))
                             self._stats.bytes_sent = int(getattr(entry, "bytesSent", 0))
-                except Exception as exc:  # pragma: no cover - defensive
+                except Exception as exc:
                     logger.debug("getStats() failed: %s", exc)
         self._stats.ice_state = self.ice_state
         self._stats.dtls_state = self.dtls_state
@@ -410,20 +413,20 @@ class TelegramTransport:
             if sender is not None:
                 try:
                     await sender.stop()
-                except Exception as exc:  # pragma: no cover - defensive
+                except Exception as exc:
                     logger.debug("Sender stop failed: %s", exc)
         self._audio_sender = None
         self._video_sender = None
         if self._dtls is not None:
             try:
                 await self._dtls.stop()
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:
                 logger.debug("DTLS stop failed: %s", exc)
             self._dtls = None
         if self._ice is not None:
             try:
                 await self._ice.stop()
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:
                 logger.debug("ICE stop failed: %s", exc)
             self._ice = None
         logger.info("Transport closed")

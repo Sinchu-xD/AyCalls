@@ -17,7 +17,7 @@ from ..exceptions import TelegramCallError, TransportError
 from ..logger import dump_signaling, get_logger
 from .client import import_pyrogram
 
-if TYPE_CHECKING:  # pragma: no cover
+if TYPE_CHECKING:
     from pyrogram import Client
 
 logger = get_logger("telegram.signaling")

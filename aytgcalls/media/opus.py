@@ -15,7 +15,7 @@ from ..exceptions import OpusError
 from ..logger import get_logger
 from ..types import BYTES_PER_FRAME, CHANNELS, SAMPLE_RATE, SAMPLES_PER_FRAME
 
-if TYPE_CHECKING:  # pragma: no cover
+if TYPE_CHECKING:
     from av import AudioFrame
 
 logger = get_logger("media.opus")
@@ -28,10 +28,10 @@ _TIME_BASE = Fraction(1, SAMPLE_RATE)
 def opus_available() -> bool:
     """True when PyAV exposes a libopus encoder."""
     try:
-        import av  # noqa: PLC0415
+        import av
 
         av.codec.Codec("libopus", "w")
-    except Exception:  # pragma: no cover - environment dependent
+    except Exception:
         return False
     return True
 
@@ -54,8 +54,8 @@ class OpusEncoder:
         self.channels = channels
         self._pts = 0
         try:
-            from av.audio.codeccontext import AudioCodecContext  # noqa: PLC0415
-            from av.codec import CodecContext  # noqa: PLC0415
+            from av.audio.codeccontext import AudioCodecContext
+            from av.codec import CodecContext
 
             context = CodecContext.create("libopus", "w")
             assert isinstance(context, AudioCodecContext)
@@ -66,7 +66,7 @@ class OpusEncoder:
             context.time_base = _TIME_BASE
             context.options = {"application": application, "frame_duration": "20"}
             self._context: Any = context
-        except Exception as exc:  # pragma: no cover - environment dependent
+        except Exception as exc:
             raise OpusError(
                 "libopus is not available through PyAV. Install the Opus library "
                 "(apt install libopus0 / brew install opus) and reinstall `av`."
@@ -91,11 +91,11 @@ class OpusEncoder:
         """Drain the encoder's internal delay."""
         try:
             return [bytes(packet) for packet in self._context.encode(None)]
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             raise OpusError(f"Opus flush failed: {exc}") from exc
 
     def _make_frame(self, pcm: bytes) -> AudioFrame:
-        from av import AudioFrame  # noqa: PLC0415
+        from av import AudioFrame
 
         frame = AudioFrame(
             format="s16",
@@ -114,7 +114,7 @@ class OpusEncoder:
         if context is not None:
             try:
                 context.close()
-            except Exception:  # pragma: no cover - PyAV version dependent
+            except Exception:
                 pass
 
     def __enter__(self) -> OpusEncoder:

@@ -31,7 +31,7 @@ def _env_int(name: str) -> int | None:
         return None
     try:
         return int(raw)
-    except ValueError as exc:  # pragma: no cover - operator error
+    except ValueError as exc:
         raise ValueError(f"Environment variable {name}={raw!r} is not an integer") from exc
 
 
@@ -84,7 +84,7 @@ class TelegramCredentials:
             )
         return self
 
-    def __repr__(self) -> str:  # pragma: no cover - cosmetic
+    def __repr__(self) -> str:
         return (
             "TelegramCredentials(api_id="
             f"{'set' if self.api_id else 'unset'}, api_hash="

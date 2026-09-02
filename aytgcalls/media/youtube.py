@@ -84,7 +84,7 @@ async def resolve_url(url: str) -> AudioSource | None:
 
     cookies = _cookie_path()
     try:
-        from YouTubeMusic import get_stream  # noqa: E501 – lazy import
+        from YouTubeMusic import get_stream
         direct_url = await get_stream(url, cookies)
     except ImportError:
         logger.debug("YouTubeMusic package not installed; cannot resolve %r", url)

@@ -155,7 +155,7 @@ class AudioSource:
         kind = SourceKind.URL if len(scheme) > 1 else SourceKind.FILE
         return cls(uri=uri, kind=kind, **kwargs)
 
-    def __str__(self) -> str:  # pragma: no cover - cosmetic
+    def __str__(self) -> str:
         return self.display_name
 
 
