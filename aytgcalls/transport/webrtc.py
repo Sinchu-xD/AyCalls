@@ -2,24 +2,24 @@
 
 Why this does not use :class:`RTCPeerConnection`
 ------------------------------------------------
-Telegram signals with JSON over MTProto, not SDP offer/answer, and two values must be
-pinned *before* the answer exists:
+Telegram signals with JSON over MTProto, not SDP offer/answer. Two values must be
+pinned before the answer arrives:
 
-* the **SSRC**, because it is committed to in ``phone.joinGroupCall``;
-* the **Opus payload type**, because the SFU picks it (normally 111) and, as the
-  offerer, we would otherwise have advertised aiortc's own dynamic PT.
+1. the **SSRC** — it's committed in ``phone.joinGroupCall``;
+2. the **Opus payload type** — the SFU picks it (normally 111), and as the offerer
+   we'd otherwise advertise aiortc's own dynamic PT.
 
-``RTCPeerConnection`` regenerates SDP internally, so pinning either value would mean
-munging strings it is free to ignore. aiortc also exposes its ORTC-level objects as
+:class:`RTCPeerConnection` regenerates SDP internally, so pinning either value means
+munging strings it's free to ignore. aiortc also exposes its ORTC-level objects as
 public API — :class:`RTCIceGatherer`, :class:`RTCIceTransport`, :class:`RTCDtlsTransport`,
-:class:`RTCRtpSender` — and those let us set ICE credentials, DTLS role, payload type and
-SSRC exactly. :mod:`aytgcalls.transport.sdp` remains a real, tested bridge for anything
-that wants the SDP view (and is what ``PROTOCOL.md`` documents).
+:class:`RTCRtpSender` — and those let us set ICE credentials, DTLS role, payload type
+and SSRC exactly. :mod:`aytgcalls.transport.sdp` remains a real, tested bridge for
+anything that wants the SDP view (and is what PROTOCOL.md documents).
 
 Video support
 -------------
-When a video track is provided, the transport creates a second RTP sender on a separate
-m-line (mid=1). The audio and video SSRCs are bound together in the join payload via an
+When a video track is present, the transport creates a second RTP sender on its own
+m-line (mid=1). The audio and video SSRCs are linked in the join payload via an
 ``ssrc-groups`` SIM entry so Telegram's SFU knows they belong to the same publisher.
 """
 

@@ -62,8 +62,8 @@ DisconnectHandler = Callable[["GroupCall", DisconnectReason], Awaitable[None] | 
 class GroupCall:
     """Publish audio into one Telegram group voice chat.
 
-    ``client`` must be a **user** session created by Kurigram; a bot session raises
-    :class:`~aytgcalls.exceptions.BotClientNotAllowed` at join time.
+    ``client`` must be a **user** session created by Kurigram. Passing a bot session
+    raises ``BotClientNotAllowed`` at join time.
     """
 
     def __init__(
@@ -440,6 +440,27 @@ class GroupCall:
         """Drop every pending track; the current one keeps playing."""
         return await self.queue.clear()
 
+    async def remove(self, index: int) -> AudioSource | None:
+        """Remove the track at ``index`` from the pending queue and return it.
+
+        :returns: the removed :class:`AudioSource`, or ``None`` if the index was out of range.
+        """
+        try:
+            return await self.queue.remove(index)
+        except IndexError:
+            return None
+
+    async def move(self, source_index: int, target_index: int) -> bool:
+        """Move the track at ``source_index`` to ``target_index`` in the pending queue.
+
+        :returns: ``True`` if the move succeeded.
+        """
+        try:
+            await self.queue.move(source_index, target_index)
+            return True
+        except IndexError:
+            return False
+
     async def loop(self, value: Any = None) -> LoopMode:
         """One call for every repeat behaviour.
 
@@ -729,6 +750,24 @@ class GroupCall:
         if self._transport is not None:
             await self._transport.refresh_stats()
         return self.stats
+
+    async def get_participants(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Return a list of participants in the voice chat.
+
+        Each dict has ``user_id``, ``muted``, ``can_self_unmute``, ``is_speaking``,
+        ``raise_hand`` and ``volume``.
+        """
+        self._require_joined()
+        assert self._discovered is not None
+        return await self._signaling.get_participants(
+            self._discovered.input_call, limit=limit
+        )
+
+    async def set_title(self, title: str) -> None:
+        """Rename the voice chat (requires admin rights in the group)."""
+        self._require_joined()
+        assert self._discovered is not None
+        await self._signaling.set_title(self._discovered.input_call, title)
 
     def debug_snapshot(self) -> str:
         """A JSON blob for bug reports. Contains no secrets."""

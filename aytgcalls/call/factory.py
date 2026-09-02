@@ -183,6 +183,14 @@ class GroupCallFactory:
         call = self._calls.get(chat_id)
         return await call.get_stats() if call is not None and call.is_connected else None
 
+    async def get_participants(self, chat_id: int | str, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Participants currently in the voice chat for ``chat_id``."""
+        return await self._require(chat_id).get_participants(limit=limit)
+
+    async def set_title(self, chat_id: int | str, title: str) -> None:
+        """Rename the voice chat for ``chat_id``."""
+        await self._require(chat_id).set_title(title)
+
     async def stop(self, chat_id: int | str) -> bool:
         """Stop playback and leave that chat. ``False`` if we were not there."""
         return await self.leave(chat_id)
@@ -214,6 +222,16 @@ class GroupCallFactory:
     async def stop_playback(self, chat_id: int | str) -> None:
         """Stop audio in ``chat_id`` but stay in the call."""
         await self._require(chat_id).stop_playback()
+
+    async def remove(self, chat_id: int | str, index: int) -> AudioSource | None:
+        """Remove track at ``index`` from ``chat_id``'s queue."""
+        call = self._calls.get(chat_id)
+        return await call.remove(index) if call is not None else None
+
+    async def move(self, chat_id: int | str, source_index: int, target_index: int) -> bool:
+        """Reorder the queue for ``chat_id``."""
+        call = self._calls.get(chat_id)
+        return await call.move(source_index, target_index) if call is not None else False
 
     async def shuffle(self, chat_id: int | str) -> None:
         """Shuffle the pending queue in ``chat_id``."""

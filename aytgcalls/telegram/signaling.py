@@ -176,3 +176,37 @@ class GroupCallSignaling:
             self.raw.functions.phone.LeaveGroupCall(call=call, source=int(source)),
             what="phone.leaveGroupCall",
         )
+
+    async def set_title(self, call: Any, title: str) -> Any:
+        """``phone.EditGroupCallTitle`` — rename the voice chat."""
+        return await self._invoke(
+            self.raw.functions.phone.EditGroupCallTitle(call=call, title=title),
+            what="phone.editGroupCallTitle",
+        )
+
+    async def get_participants(self, call: Any, *, limit: int = 100) -> list[dict[str, Any]]:
+        """``phone.GetGroupCall`` with enough participants.
+
+        :returns: a list of ``{"user_id": int, "muted": bool, ...}`` dicts.
+        """
+        result = await self.get_group_call(call, limit=limit)
+        participants = getattr(result, "participants", []) or []
+        out: list[dict[str, Any]] = []
+        for p in participants:
+            peer = getattr(p, "peer", None)
+            user_id = getattr(getattr(peer, "user_id", None), "user_id", None) or getattr(
+                peer, "user_id", None
+            )
+            if user_id is None:
+                continue
+            out.append(
+                {
+                    "user_id": int(user_id),
+                    "muted": bool(getattr(p, "muted", False)),
+                    "can_self_unmute": bool(getattr(p, "can_self_unmute", True)),
+                    "is_speaking": bool(getattr(p, "is_speaking", False)),
+                    "raise_hand": bool(getattr(p, "raise_hand", False)),
+                    "volume": int(getattr(p, "volume", 0)),
+                }
+            )
+        return out

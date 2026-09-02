@@ -189,6 +189,14 @@ class AyClient:
 
     # -- queue -------------------------------------------------------------------------------
 
+    async def remove(self, chat_id: int | str, index: int) -> Any:
+        """Remove the track at ``index`` from the pending queue. Returns it or ``None``."""
+        return await self._require_factory().remove(chat_id, index)
+
+    async def move(self, chat_id: int | str, source_index: int, target_index: int) -> bool:
+        """Reorder the pending queue by moving a track. Returns ``True`` on success."""
+        return await self._require_factory().move(chat_id, source_index, target_index)
+
     async def shuffle(self, chat_id: int | str) -> None:
         """Shuffle the pending queue in ``chat_id``."""
         await self._require_factory().shuffle(chat_id)
@@ -261,6 +269,14 @@ class AyClient:
     async def get_stats(self, chat_id: int | str) -> Any:
         """Live :class:`~aytgcalls.CallStats` for ``chat_id``, or ``None``."""
         return await self._require_factory().get_stats(chat_id)
+
+    async def get_participants(self, chat_id: int | str, *, limit: int = 100) -> list[dict[str, Any]]:
+        """List participants currently in the voice chat."""
+        return await self._require_factory().get_participants(chat_id, limit=limit)
+
+    async def set_title(self, chat_id: int | str, title: str) -> None:
+        """Rename the voice chat (admin only)."""
+        await self._require_factory().set_title(chat_id, title)
 
     def is_connected(self, chat_id: int | str) -> bool:
         """Whether we are currently in the voice chat for ``chat_id``."""

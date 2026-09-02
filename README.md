@@ -1,11 +1,21 @@
-# aytgcalls
+# AyCalls
 
-Play audio into **Telegram group voice chats** from Python.
+> Play audio and video into **Telegram group voice chats** from Python.
+> No `py-tgcalls`. No `tgcalls`. No Telethon. Just Kurigram + aiortc + FFmpeg.
 
-* **Kurigram** for MTProto signaling (`phone.*`)
-* **aiortc** for real media transport — ICE → DTLS-SRTP → RTP/Opus
-* **FFmpeg** for decoding anything into 48 kHz stereo PCM
-* **No py-tgcalls, no tgcalls, no Telethon.** Not wrapped, not vendored, not a dependency.
+[![PyPI](https://img.shields.io/pypi/v/aytgcalls.svg)](https://pypi.org/project/aytgcalls/)
+[![Python](https://img.shields.io/pypi/pyversions/aytgcalls.svg)](https://pypi.org/project/aytgcalls/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-274%20passed-brightgreen.svg)](examples/tests/)
+
+AyCalls is a small, opinionated library that wires three battle-tested tools together:
+
+* **Kurigram** — MTProto signaling (`phone.joinGroupCall`, `phone.LeaveGroupCall`, …)
+* **aiortc** — ICE / DTLS-SRTP / RTP, controlled at the ORTC level so SSRCs can be pinned
+* **FFmpeg** — decodes anything you point it at into 48 kHz stereo PCM
+
+The result is a `pytgcalls`-style API that just works: one `play()` call handles join,
+queue, playback, and auto-leave.
 
 ```python
 from aytgcalls import AyClient, AyCreds
@@ -13,42 +23,56 @@ from aytgcalls import AyClient, AyCreds
 client = AyClient(AyCreds.from_env())
 await client.start()
 
-await client.play(-1001234567890, "song.mp3")   # auto-join + play
+await client.play(-1001234567890, "song.mp3")    # auto-join + play
 await client.skip(-1001234567890)
 await client.end(-1001234567890)
 await client.stop()
 ```
 
-Every action takes `chat_id` first — one class, multiple voice chats.
+Every action takes `chat_id` first — one client, many voice chats.
 
 ---
 
 ## Table of contents
 
+- [Features](#features)
 - [How it works](#how-it-works)
-- [A bot cannot join a voice chat](#a-bot-cannot-join-a-voice-chat)
+- [Why you need two accounts](#why-you-need-two-accounts)
 - [Installation](#installation)
-  - [Removing conflicting Pyrogram forks](#removing-conflicting-pyrogram-forks)
-  - [FFmpeg and libopus](#ffmpeg-and-libopus)
 - [Generating a STRING_SESSION](#generating-a-string_session)
 - [Quick start](#quick-start)
-- [Three ways to use it](#three-ways-to-use-it)
+- [Three usage styles](#three-usage-styles)
   - [AyClient — one class, everything](#ayclient--one-class-everything)
   - [AyFac — factory for many chats](#ayfac--factory-for-many-chats)
   - [AyCall — one call, full control](#aycall--one-call-full-control)
 - [API reference](#api-reference)
-- [Queue](#queue)
+- [The queue](#the-queue)
 - [Events](#events)
 - [Video / screen sharing](#video--screen-sharing)
-- [Bot command interface](#bot-command-interface)
+- [Bot command surface](#bot-command-surface)
 - [Configuration](#configuration)
 - [Error handling](#error-handling)
-- [Verifying it works on a VPS](#verifying-it-works-on-a-vps)
+- [Verifying it works](#verifying-it-works-on-a-vps)
 - [Troubleshooting](#troubleshooting)
-- [What is and is not implemented](#what-is-and-is-not-implemented)
+- [What's implemented, what's not](#whats-implemented-whats-not)
 - [Development](#development)
+- [License](#license)
 
 ---
+
+## Features
+
+- 🎵 **Stream any audio format** FFmpeg understands — MP3, FLAC, OGG/Opus, WAV, AAC, M4A, MOV, MKV, remote HTTP(S) streams, Telegram voice notes, YouTube / SoundCloud / Vimeo / Twitch (via the optional `yt-dlp` integration)
+- 🎬 **Video / screen sharing** via H.264 on a presentation SSRC
+- ⏯ **Full playback control** — play, pause, resume, skip, previous, replay, stop, seek, forward, rewind, loop (track / queue / shuffle / count)
+- 📜 **Near-gapless transitions** — the next track starts the moment the previous one hits EOF, so the 20 ms RTP cadence never breaks
+- 🧠 **Smart seeking** — byte-offset seeks for self-framing formats (MP3, AAC, ADTS, AC3), FFmpeg `-ss` for header-dependent ones (WAV, FLAC, OGG, MP4), live streams are refused with a clear error
+- 🪄 **One-call automation** — `play()` auto-joins, auto-queues, the call auto-leaves when the queue empties (with a configurable grace period)
+- 🔁 **Auto-reconnect** with exponential backoff when the SFU drops you
+- 🔇 **Server-side mute / unmute / volume** through `phone.editGroupCallParticipant`
+- 👥 **List participants**, rename the voice chat, query live RTP / ICE / DTLS stats
+- 🧹 **JSON ⇄ SDP bridge** (both directions, round-trip tested) for anyone who wants the SDP view
+- 🪶 **Lazy imports** — aiortc and Kurigram only load when you actually need them, so unit tests don't drag them in
 
 ## How it works
 
@@ -69,20 +93,22 @@ InputGroupCall ──► phone.joinGroupCall(params = {ssrc, ufrag, pwd, fingerp
  file/URL ─ FFmpeg ─► PCM s16le 48k/2 ─► ring buffer ─► gain ─► Opus 20 ms ─► RTP ─► SFU
 ```
 
-The full protocol write-up is in [`PROTOCOL.md`](PROTOCOL.md).
+The full protocol write-up — including how the SSRC and Opus payload type are pinned, and
+why we can't use `RTCPeerConnection` directly — lives in [`PROTOCOL.md`](PROTOCOL.md).
 
-## A bot cannot join a voice chat
+## Why you need two accounts
 
-This is a Telegram limitation, not a library one. `phone.joinGroupCall` is user-only.
+This is a Telegram limitation, not a library one: `phone.joinGroupCall` is **user-only**.
 
-So `aytgcalls` uses the standard two-account pattern:
+The standard pattern is a two-account setup:
 
 | Account | Role |
 |---|---|
-| **User** ("assistant"), via `API_ID` + `API_HASH` + `STRING_SESSION` | Joins the call and streams audio. **Required.** |
-| **Bot**, via `BOT_TOKEN` | Optional. Parses `/play`, `/skip`… and dispatches to the assistant. Never touches the call. |
+| **User** ("assistant"), via `API_ID` + `API_HASH` + `STRING_SESSION` | Joins the call and streams media. **Required.** |
+| **Bot**, via `BOT_TOKEN` | Optional. Parses `/play`, `/skip`, etc. and dispatches to the assistant. Never touches the call. |
 
-`GroupCall` checks this at join time and raises `BotClientNotAllowed` if you hand it a bot session.
+`GroupCall` checks this at join time and raises `BotClientNotAllowed` if you hand it a
+bot session.
 
 ## Installation
 
@@ -90,28 +116,28 @@ So `aytgcalls` uses the standard two-account pattern:
 pip install aytgcalls
 ```
 
-### Removing conflicting Pyrogram forks
+### Remove conflicting Pyrogram forks
 
 Kurigram is a maintained Pyrogram fork and **still imports as `pyrogram`**. If the real
-`pyrogram` or `pyrofork` is installed alongside it, they overwrite each other's files and
-you get bizarre import errors. Remove them first:
+`pyrogram` or `pyrofork` is installed alongside it, the two packages overwrite each
+other's files and you get bizarre import errors. Clean them up first:
 
 ```bash
 pip uninstall -y pyrogram pyrofork tgcalls py-tgcalls pytgcalls
 pip install -U kurigram aytgcalls
 ```
 
-Optional speedup (recommended):
+Recommended speedup:
 
 ```bash
 pip install "aytgcalls[fast]"     # adds tgcrypto
 ```
 
-Verify:
+Sanity-check the install:
 
 ```bash
-python -c "import pyrogram; print(pyrogram.__version__)"   # e.g. 2.2.24 (kurigram)
-python -c "import importlib.util; assert importlib.util.find_spec('tgcalls') is None; print('no tgcalls ✓')"
+python -c "import pyrogram; print(pyrogram.__version__)"   # should be a kurigram version
+python -c "import importlib.util; assert importlib.util.find_spec('tgcalls') is None; print('no py-tgcalls')"
 ```
 
 ### FFmpeg and libopus
@@ -127,18 +153,31 @@ sudo dnf install -y ffmpeg opus
 brew install ffmpeg opus
 ```
 
-Check:
+Verify:
 
 ```bash
 ffmpeg -version
 python -c "from aytgcalls.media.opus import opus_available; print('opus ✓' if opus_available() else 'opus ✗')"
 ```
 
-If `ffmpeg` is not on `PATH`, point at it explicitly:
+If `ffmpeg` isn't on `PATH`, point at it explicitly:
 
 ```bash
 export AYTGCALLS_FFMPEG=/usr/local/bin/ffmpeg
 ```
+
+### Optional: YouTube / streaming sites
+
+For YouTube, SoundCloud, Vimeo, Twitch and similar, install `yt-dlp` and the helper
+package picks it up automatically:
+
+```bash
+pip install -U yt-dlp
+```
+
+AyCalls uses [`YouTubeMusic`](https://pypi.org/project/YouTubeMusic/) internally — it
+wraps `yt-dlp` with format selectors that always return direct progressive URLs, never
+HLS / DASH manifests.
 
 ## Generating a STRING_SESSION
 
@@ -154,7 +193,7 @@ Log in with the **phone number of a normal account** (not a bot). The script pri
 session string once.
 
 > **Treat `STRING_SESSION` like a password.** Anyone with it has full access to that
-> account. Keep it in an environment variable or a secret manager. `aytgcalls` never
+> account. Keep it in an environment variable or a secret manager. AyCalls never
 > hardcodes credentials and never logs them.
 
 ## Quick start
@@ -167,7 +206,7 @@ async def main():
     client = AyClient(AyCreds.from_env())
     await client.start()
 
-    await client.play(-1001234567890, "song.mp3")   # auto-join + play
+    await client.play(-1001234567890, "song.mp3")    # auto-join + play
     await asyncio.sleep(30)
     await client.stop()
 
@@ -176,7 +215,7 @@ asyncio.run(main())
 
 That's it — one `play()` call handles join, queue, play, and auto-leave.
 
-## Three ways to use it
+## Three usage styles
 
 ### AyClient — one class, everything
 
@@ -189,7 +228,7 @@ client = AyClient(AyCreds.from_env())
 await client.start()
 
 # every method takes chat_id first
-await client.play(chat_id, "song.mp3")         # auto-join + play or queue
+await client.play(chat_id, "song.mp3")          # auto-join + play or queue
 await client.pause(chat_id)
 await client.resume(chat_id)
 await client.skip(chat_id)
@@ -207,50 +246,52 @@ await client.play_video(chat_id, "clip.mp4")
 print(client.position(chat_id))
 print(client.now_playing(chat_id))
 print(client.is_connected(chat_id))
+print(await client.get_participants(chat_id))   # who's in the call
 
 # lifecycle
-await client.end(chat_id)     # stop + leave this chat
-await client.stop()           # leave all + shutdown
+await client.end(chat_id)        # stop + leave this chat
+await client.stop()              # leave all + shutdown
 ```
 
-`AyClient` wraps `AyFac` internally and mirrors every per-chat control. It also accepts a
-pre-built Pyrogram `Client` if you need more control over startup.
+`AyClient` wraps `AyFac` internally and mirrors every per-chat control. You can also pass
+in a pre-built Kurigram `Client` if you need more control over startup.
 
 ### AyFac — factory for many chats
 
-For when you want the factory directly:
+For when you want the factory directly — useful if you already have a Kurigram client
+lying around:
 
 ```python
 from aytgcalls import AyFac
 
 fac = AyFac(user_client)
-await fac.play(chat_id, "song.mp3")      # creates, joins, plays or queues
+await fac.play(chat_id, "song.mp3")         # creates, joins, plays or queues
 await fac.pause(chat_id)
 await fac.skip(chat_id)
 await fac.volume(chat_id, 80)
-await fac.stop(chat_id)                  # stop + leave
-await fac.leave_all()                    # shutdown
+await fac.stop(chat_id)                     # stop + leave
+await fac.leave_all()                       # shutdown
 ```
 
 ### AyCall — one call, full control
 
-For a single persistent voice chat:
+For a single persistent voice chat where you want the call object as the API:
 
 ```python
 from aytgcalls import AyCall
 
 call = AyCall(user_client, chat_id)
-await call.play("song.mp3")              # joins + plays
+await call.play("song.mp3")                 # joins + plays
 await call.pause()
 await call.resume()
 await call.skip()
-await call.end()                         # stop + leave
+await call.end()                            # stop + leave
 ```
 
 ## API reference
 
 All methods are available on `AyClient`, `AyFac` (with `chat_id` first), and `AyCall`
-(without `chat_id`). The table shows the `AyClient` signature.
+(without `chat_id`). The table below shows the `AyClient` signature.
 
 ### Playback
 
@@ -261,20 +302,20 @@ await client.add(chat_id, source)               # alias for play()
 await client.pause(chat_id)
 await client.resume(chat_id)
 await client.stop_playback(chat_id)             # stop audio, stay in the call
-await client.stop(chat_id)                      # stop + leave  (same as end())
+await client.stop(chat_id)                      # stop + leave (same as end)
 await client.end(chat_id)
 await client.previous(chat_id)
 await client.replay(chat_id)
 ```
 
-`source` can be a local path, an `http(s)` URL, a Pyrogram `Message`, or an `AudioSource`.
+`source` can be a local path, an `http(s)` URL, a Kurigram `Message`, or an `AudioSource`.
 
 ### Seeking
 
 ```python
-await client.seek(chat_id, 90)        # absolute seconds → where we landed
-await client.forward(chat_id, 10)     # skip forward (default 10 s)
-await client.rewind(chat_id, 10)      # skip backward (default 10 s)
+await client.seek(chat_id, 90)        # absolute seconds → returns where we landed
+await client.forward(chat_id, 10)     # skip forward (default 10s)
+await client.rewind(chat_id, 10)      # skip backward (default 10s, clamped at start)
 ```
 
 ### Queue
@@ -282,6 +323,8 @@ await client.rewind(chat_id, 10)      # skip backward (default 10 s)
 ```python
 await client.shuffle(chat_id)
 await client.clear_queue(chat_id)
+await client.remove(chat_id, 2)       # drop the track at index 2
+await client.move(chat_id, 4, 0)      # move index 4 to the front
 await client.loop(chat_id, "off")     # "off" | "track" | "queue" | "shuffle"
 await client.loop(chat_id, 3)         # repeat current track 3 more times
 await client.loop(chat_id)            # read current mode
@@ -291,28 +334,29 @@ await client.loop(chat_id)            # read current mode
 
 ```python
 await client.volume(chat_id, 80)      # local gain, 0..200 (%)
-await client.mute(chat_id)
-await client.unmute(chat_id)
+await client.mute(chat_id)            # server-side
+await client.unmute(chat_id)          # server-side
 ```
 
 ### Video
 
 ```python
 await client.play_video(chat_id, "clip.mp4")   # stream video
-await client.stop_video(chat_id)                # stop video, audio continues
+await client.stop_video(chat_id)               # stop video, audio continues
 ```
 
 ### Introspection
 
 ```python
-client.now_playing(chat_id)           # TrackInfo: title, state, position, duration …
+client.now_playing(chat_id)           # TrackInfo: title, state, position, duration…
 client.position(chat_id)              # current playback position (seconds)
 client.duration(chat_id)              # track duration (None for live)
 client.volume(chat_id)                # current volume setting
-client.playback_state(chat_id)        # PlaybackState: PLAYING | PAUSED | IDLE …
-client.is_connected(chat_id)          # whether we are in the voice chat
+client.playback_state(chat_id)        # PlaybackState: PLAYING | PAUSED | IDLE…
+client.is_connected(chat_id)          # whether we're in the voice chat
 client.get_call(chat_id)              # underlying GroupCall, or None
-await client.get_stats(chat_id)       # CallStats: packets, bytes, frames, ICE state …
+await client.get_stats(chat_id)       # CallStats: packets, bytes, frames, ICE state…
+await client.get_participants(chat_id)# list of participants
 client.active_calls                   # dict of all joined calls
 len(client)                           # number of active calls
 ```
@@ -322,15 +366,16 @@ len(client)                           # number of active calls
 ```python
 await client.join(chat_id)            # join without playing
 await client.leave(chat_id)           # leave this chat
+await client.set_title(chat_id, "Late night 🎧")   # rename the voice chat
 ```
 
-## Queue
+## The queue
 
 ```python
 from aytgcalls import AyLoop
 
 await call.queue.add("a.mp3")
-await call.queue.add("b.mp3", position=0)
+await call.queue.add("b.mp3", position=0)         # insert at the front
 await call.queue.extend(["c.mp3", "https://example.com/d.mp3"])
 await call.queue.remove(1)
 await call.queue.clear()
@@ -350,12 +395,13 @@ await call.loop("shuffle")          # shuffle + keep looping
 await call.loop("off")
 ```
 
-Loop accepts a count, a `LoopMode`, or any friendly word (`one`, `song`, `all`,
-`playlist`, `repeat`, `shuffle`, `off`), so a chat command can be forwarded straight to it.
-After `loop(3)` plays the track three more times the mode falls back to `off` by itself.
+`loop()` accepts a count, a `LoopMode`, or any friendly word (`one`, `song`, `all`,
+`playlist`, `repeat`, `shuffle`, `off`), so a chat command can be forwarded straight to
+it. After `loop(3)` plays the track three more times the mode falls back to `off` on
+its own.
 
-`play()` returns `(track, started_now)` so a bot can reply either "playing" or "queued at
-#3" without tracking state itself. When a track ends the next one starts on its own.
+`play()` returns `(track, started_now)` so a bot can reply either "playing" or "queued
+at #3" without tracking state itself. When a track ends the next one starts on its own.
 
 Transitions are near-gapless: the next FFmpeg process starts the moment the previous one
 hits EOF, feeding the same ring buffer, so the 20 ms RTP cadence never breaks.
@@ -370,7 +416,7 @@ async def _(call, source, reason):
 
 @call.on_disconnect
 async def _(call, reason):
-    # reason: REQUESTED | CALL_ENDED | KICKED | TRANSPORT_FAILED | SFU_TIMEOUT
+    # reason: REQUESTED | CALL_ENDED | KICKED | TRANSPORT_FAILED | SFU_TIMEOUT | QUEUE_FINISHED
     print("disconnected", reason.value)
 ```
 
@@ -385,17 +431,19 @@ await call.play("song.mp3")             # audio keeps going
 The video track is encoded to H.264 by FFmpeg and sent on the dedicated presentation
 SSRC (`ssrc-groups`). Requires Telegram's presentation join path.
 
-## Bot command interface
+## Bot command surface
 
 See [`examples/bot_plus_assistant.py`](examples/bot_plus_assistant.py) for a complete
-command surface using `AyFac`:
+command set using `AyFac`:
 
 ```
-/play <file|url>   or reply to a voice/audio message      /now   /queue
-/pause  /resume  /skip  /previous  /replay  /stop
+/play <file|url>   or reply to a voice/audio message
+/pause  /resume  /skip  /previous  /replay  /stop  /end
 /seek <secs>  /forward [secs]  /rewind [secs]
 /volume <0-200>  /mute  /unmute
 /loop <n|track|queue|shuffle|off>
+/remove <idx>  /move <from> <to>
+/now   /queue   /participants
 ```
 
 There is no `/join` and no `/add` — `/play` covers both.
@@ -439,7 +487,7 @@ from aytgcalls import enable_debug
 enable_debug()
 ```
 
-## Automation you can turn off
+### Automation you can turn off
 
 ```python
 AyConfig(
@@ -472,7 +520,7 @@ AytgcallsError
                                  GROUPCALL_SSRC_DUPLICATE_MUCH, JOIN_AS_PEER_INVALID
 ```
 
-`TelegramCallError` attaches an explanation to every known RPC error id:
+`TelegramCallError` attaches a plain-English explanation to every known RPC error id:
 
 ```python
 from aytgcalls.exceptions import AytgcallsError
@@ -507,94 +555,95 @@ expected 50 packets/second, prints the stats, and leaves cleanly. Exit code 0 = 
 
 ## Troubleshooting
 
-**Nobody can hear anything, but `packets_sent` keeps rising**
-The media path is fine; you are almost certainly *server-side muted*. In a group where
+**Nobody can hear anything, but `packets_sent` keeps rising.**
+The media path is fine; you're almost certainly *server-side muted*. In a group where
 members join muted, an admin must unmute the assistant, or the account needs speaking
 rights. Watch the logs for `Server-side muted with can_self_unmute=False`. You can also
 try `await call.mute(False)`.
 
-**`ICEFailed: ICE did not connect`**
-Outbound UDP is blocked. Telegram's media servers need arbitrary outbound UDP (ports vary,
-commonly the 40000–65535 range) to `91.108.x.x` / `149.154.x.x`. Cloud firewalls that only
-allow TCP will fail here. There is no TCP fallback in this package.
+**`ICEFailed: ICE did not connect`.**
+Outbound UDP is blocked. Telegram's media servers need arbitrary outbound UDP (ports
+vary, commonly 40000–65535) to `91.108.x.x` / `149.154.x.x`. Cloud firewalls that only
+allow TCP will fail here. There's no TCP fallback in this package.
 
-**`DTLSHandshakeFailed`**
-ICE succeeded but the handshake did not. Usually a stale call: leave, wait a few seconds,
-rediscover and rejoin (`auto_reconnect=True` does this for you). Check your clock is
-correct — certificate validity is time-sensitive.
+**`DTLSHandshakeFailed`.**
+ICE succeeded but the handshake didn't. Usually a stale call — leave, wait a few
+seconds, rediscover and rejoin (`auto_reconnect=True` does this for you). Also check
+your clock is correct — certificate validity is time-sensitive.
 
-**`CHAT_ADMIN_REQUIRED`**
-The account lacks rights for that action. Promote the assistant, or ask an admin to allow
-members to speak.
+**`CHAT_ADMIN_REQUIRED`.**
+The account lacks rights for that action. Promote the assistant, or ask an admin to
+allow members to speak.
 
-**`GROUPCALL_SSRC_DUPLICATE_MUCH`**
-A previous session never left cleanly. `aytgcalls` picks a fresh SSRC per join; wait a few
+**`GROUPCALL_SSRC_DUPLICATE_MUCH`.**
+A previous session never left cleanly. AyCalls picks a fresh SSRC per join; wait a few
 seconds and retry.
 
-**`FFmpegNotInstalled`**
+**`FFmpegNotInstalled`.**
 `apt install ffmpeg`, or set `AYTGCALLS_FFMPEG=/path/to/ffmpeg`.
 
-**`GroupCallNotFound`**
-The voice chat is not running (or is scheduled for later). This package joins existing
-calls; it does not create them.
+**`GroupCallNotFound`.**
+The voice chat isn't running (or is scheduled for later). AyCalls joins existing calls;
+it doesn't create them.
 
-**Choppy audio / lots of `underruns` in the stats**
+**Choppy audio / lots of `underruns` in the stats.**
 Increase `buffer_ms` / `prefetch_ms`, especially for remote URLs on a slow link.
 
-**`ImportError` mentioning `pyrogram`**
+**`ImportError` mentioning `pyrogram`.**
 Two forks are installed at once. See
-[Removing conflicting Pyrogram forks](#removing-conflicting-pyrogram-forks).
+[Remove conflicting Pyrogram forks](#remove-conflicting-pyrogram-forks).
 
-**The call is an RTMP broadcast**
-`TransportError: … RTMP/stream broadcast`. Those calls do not accept WebRTC publishers at
-all; you would have to push to the RTMP URL from `phone.getGroupCallStreamRtmpUrl`.
-See `PROTOCOL.md` §7.
+**`TransportError: … RTMP/stream broadcast`.**
+Those calls don't accept WebRTC publishers at all — you'd have to push to the RTMP URL
+from `phone.getGroupCallStreamRtmpUrl`. See `PROTOCOL.md` §7.
 
-## What is and is not implemented
+## What's implemented, what's not
 
 Implemented:
 
-* discovery, join, keepalive, leave, mute/unmute, volume, update handling, reconnect
-* one-call automation: `play()` auto-joins, auto-queues and the call auto-leaves when the
+- Discovery, join, keepalive, leave, mute/unmute, volume, update handling, reconnect
+- One-call automation: `play()` auto-joins, auto-queues, the call auto-leaves when the
   queue empties
-* full playback control: play / pause / resume / skip / previous / replay / stop / end,
-  seek / forward / rewind, loop (count·track·queue·shuffle), live position + duration
-* Telegram voice notes and audio messages as sources, downloaded and cleaned up for you
-* JSON ⇄ SDP bridge (both directions, round-trip tested)
-* ICE (controlling) + DTLS-SRTP (client) + RTP with pinned SSRC and the SFU's payload type
-* FFmpeg → PCM → ring buffer → gain → Opus 20 ms → paced RTP
-* queue with loop/shuffle/history, near-gapless transitions, deterministic teardown
-* video / screen sharing via presentation SSRC (H.264, FFmpeg-encoded)
+- Full playback control: play / pause / resume / skip / previous / replay / stop / end,
+  seek / forward / rewind, loop (count / track / queue / shuffle), live position + duration
+- Telegram voice notes and audio messages as sources (downloaded and cleaned up for you)
+- JSON ⇄ SDP bridge (both directions, round-trip tested)
+- ICE (controlling) + DTLS-SRTP (client) + RTP with pinned SSRC and the SFU's payload type
+- FFmpeg → PCM → ring buffer → gain → Opus 20 ms → paced RTP
+- Queue with loop / shuffle / history, near-gapless transitions, deterministic teardown
+- Video / screen sharing via presentation SSRC (H.264, FFmpeg-encoded)
+- Participant listing and voice-chat renaming
 
-Not implemented, deliberately:
+Deliberately not implemented:
 
-* **Receiving** other participants' audio (we publish only)
-* **RTMP / stream-mode** calls (detected and rejected with a clear error)
-* **E2E conference calls** (`public_key` / `block` arguments of `phone.joinGroupCall`)
+- **Receiving** other participants' audio (we publish only)
+- **RTMP / stream-mode** calls (detected and rejected with a clear error)
+- **E2E conference calls** (`public_key` / `block` arguments of `phone.joinGroupCall`)
 
 ## Development
 
 ```bash
-git clone … && cd aytgcalls
+git clone https://github.com/Sinchu-xD/AyCalls.git
+cd AyCalls
 pip install -e ".[dev]"
-pytest -q          # ~250 tests, no network required
+pytest -q          # 274 tests, no network required
 ruff check .
 mypy aytgcalls
 ```
 
 Two of the test modules go further than unit tests:
 
-* `examples/tests/test_loopback.py` stands up a second aiortc peer locally, serialises its
-  parameters into exactly the JSON shape Telegram sends, and runs a real
+- `examples/tests/test_loopback.py` stands up a second aiortc peer locally, serialises
+  its parameters into exactly the JSON shape Telegram sends, and runs a real
   ICE + DTLS-SRTP + Opus RTP session against it.
-* `examples/tests/test_integration.py` drives the **public API** — `play()` →
-  `pause`/`resume`/`skip`/`volume` → `leave()` — against a fake Kurigram client that
-  returns real TL objects and hands off to that local peer. It asserts the far end
+- `examples/tests/test_integration.py` drives the **public API** — `play()` →
+  `pause` / `resume` / `skip` / `volume` → `leave()` — against a fake Kurigram client
+  that returns real TL objects and hands off to that local peer. It asserts the far end
   decodes 48 kHz audio, that `phone.checkGroupCall` keepalives run, that
   `phone.leaveGroupCall` gets our SSRC, and that no tasks or FFmpeg processes leak.
 
-What neither can prove is that Telegram's *production* SFU accepts the join payload; that
-is what `examples/scripts/live_check.py` is for.
+What neither can prove is that Telegram's *production* SFU accepts the join payload —
+that's what `examples/scripts/live_check.py` is for.
 
 ## License
 

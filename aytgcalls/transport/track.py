@@ -87,9 +87,9 @@ class PcmStreamTrack(MediaStreamTrack):
         if delay > 0:
             await asyncio.sleep(delay)
         elif delay < -0.5:
-            # We fell more than half a second behind (blocked loop, suspended host).
-            # Resync rather than machine-gunning a burst of catch-up packets.
-            logger.warning("Sender drifted %.0f ms behind; resyncing clock", -delay * 1000)
+            # Drifted more than 500 ms behind — likely a GC pause or a blocked loop.
+            # Resync instead of flushing a burst of catch-up packets.
+            logger.warning("Sender drifted %.0f ms; resyncing clock", -delay * 1000)
             self._deadline = time.monotonic()
 
     # -- MediaStreamTrack -----------------------------------------------------------
